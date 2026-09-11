@@ -946,4 +946,4 @@ if ('serviceWorker' in navigator) {
 }
 
 /* ---------------- init ---------------- */
-renderDashboard();
+switchView('dashboard');
