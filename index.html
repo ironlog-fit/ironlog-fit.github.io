@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>IronLog — Personal Training System</title>
+<meta name="description" content="A personal, self-hosted training, habit and nutrition tracker.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+
+<!-- PWA: installability -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#14130F">
+<link rel="icon" href="icons/icon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="IronLog">
+</head>
+<body>
+
+<div id="app">
+
+  <header id="topbar">
+    <div class="topbar-brand">
+      <span class="mark">⛓</span>
+      <span class="wordmark">IronLog</span>
+    </div>
+    <div class="topbar-right">
+      <button class="icon-btn" id="streak-pill" data-target="dashboard" title="Streak">
+        <span id="streak-flame">🔥</span><span id="streak-count">0</span>
+      </button>
+      <button class="icon-btn hidden" id="install-btn" title="Install app">⬇ Install</button>
+      <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings">⚙</button>
+    </div>
+  </header>
+
+  <div id="ios-install-tip" class="ios-tip hidden">
+    <span>Install IronLog: tap <strong>Share</strong> → <strong>Add to Home Screen</strong>.</span>
+    <button id="ios-tip-dismiss" aria-label="Dismiss">×</button>
+  </div>
+
+  <main id="views">
+
+    <!-- DASHBOARD -->
+    <section class="view" id="view-dashboard" data-view="dashboard">
+      <div class="gauge-wrap">
+        <svg id="rank-gauge" viewBox="0 0 240 140" aria-hidden="true">
+          <path id="gauge-track" d="M 20 120 A 100 100 0 0 1 220 120" />
+          <path id="gauge-fill" d="M 20 120 A 100 100 0 0 1 220 120" />
+        </svg>
+        <div class="gauge-center">
+          <div class="gauge-rank" id="rank-name">Bronze</div>
+          <div class="gauge-xp"><span id="xp-current">0</span> XP</div>
+          <div class="gauge-next" id="xp-next">500 to Silver</div>
+        </div>
+      </div>
+
+      <div class="today-grid">
+        <button class="today-tile" data-target="train">
+          <span class="today-label">Training</span>
+          <span class="today-value" id="today-workout">Not logged</span>
+        </button>
+        <button class="today-tile" data-target="habits">
+          <span class="today-label">Habits</span>
+          <span class="today-value" id="today-habits">0 / 6</span>
+        </button>
+        <button class="today-tile" data-target="fuel">
+          <span class="today-label">Fuel</span>
+          <span class="today-value" id="today-fuel">0 / 0 kcal</span>
+        </button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Last 7 days</h2>
+        </div>
+        <div class="week-strip" id="week-strip"></div>
+      </div>
+
+      <div class="quick-actions">
+        <button class="btn btn-brass" data-target="train">Start a workout</button>
+        <button class="btn btn-outline" data-target="fuel">Log a meal</button>
+      </div>
+    </section>
+
+    <!-- TRAIN -->
+    <section class="view" id="view-train" data-view="train">
+      <div class="subnav" id="train-subnav">
+        <button class="pill active" data-sub="session">Session</button>
+        <button class="pill" data-sub="templates">Templates</button>
+        <button class="pill" data-sub="history">History</button>
+      </div>
+
+      <div class="subview" id="train-session" data-sub="session">
+        <!-- populated by JS: either template picker or active session -->
+      </div>
+
+      <div class="subview hidden" id="train-templates" data-sub="templates">
+        <div id="templates-list"></div>
+        <button class="btn btn-outline btn-block" id="add-template-btn">+ New template</button>
+      </div>
+
+      <div class="subview hidden" id="train-history" data-sub="history">
+        <div class="panel">
+          <div class="panel-head"><h2>Personal records</h2></div>
+          <div id="pr-list" class="pr-list"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h2>Past sessions</h2></div>
+          <div id="history-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- HABITS -->
+    <section class="view" id="view-habits" data-view="habits">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Today</h2>
+          <span class="muted" id="habits-today-count">0 / 6 done</span>
+        </div>
+        <div id="habits-list"></div>
+      </div>
+      <button class="btn btn-outline btn-block" id="add-habit-btn">+ Add habit</button>
+    </section>
+
+    <!-- FUEL -->
+    <section class="view" id="view-fuel" data-view="fuel">
+      <div class="panel">
+        <div class="panel-head"><h2>Today's macros</h2></div>
+        <div id="macro-bars"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Quick add</h2></div>
+        <div class="chip-row" id="quick-food-chips"></div>
+      </div>
+
+      <div class="panel" id="ai-estimate-panel">
+        <div class="panel-head"><h2>Describe a meal</h2></div>
+        <p class="hint">Optional — uses your own API key to estimate macros from a description. Set it up in Settings.</p>
+        <div class="row">
+          <input type="text" id="ai-food-desc" placeholder="e.g. 2 rotis, dal and a bowl of rice">
+          <button class="btn btn-brass" id="ai-estimate-btn">Estimate</button>
+        </div>
+        <div id="ai-estimate-status" class="hint"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Add manually</h2></div>
+        <form id="manual-food-form" class="stacked-form">
+          <input type="text" id="mf-name" placeholder="Meal name" required>
+          <div class="form-grid">
+            <input type="number" id="mf-cal" placeholder="kcal" min="0" required>
+            <input type="number" id="mf-protein" placeholder="protein g" min="0" required>
+            <input type="number" id="mf-carbs" placeholder="carbs g" min="0" required>
+            <input type="number" id="mf-fat" placeholder="fat g" min="0" required>
+          </div>
+          <button type="submit" class="btn btn-brass btn-block">Add meal</button>
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Logged today</h2></div>
+        <div id="meal-log-list"></div>
+      </div>
+    </section>
+
+    <!-- COACH -->
+    <section class="view" id="view-coach" data-view="coach">
+      <div id="coach-empty" class="panel hidden">
+        <div class="panel-head"><h2>Coach is off</h2></div>
+        <p class="hint">Add your own Anthropic API key in Settings to turn on the AI coach. It runs straight from your browser to Anthropic's API — nothing passes through a third-party server, and the key never leaves your device.</p>
+        <button class="btn btn-brass" data-target="settings">Open Settings</button>
+      </div>
+      <div id="coach-chat-wrap">
+        <div id="coach-log"></div>
+        <form id="coach-form" class="coach-input-row">
+          <input type="text" id="coach-input" placeholder="Ask your coach…" autocomplete="off">
+          <button type="submit" class="btn btn-brass">Send</button>
+        </form>
+        <p class="hint tiny">Chat resets on page refresh — it isn't saved.</p>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view" id="view-settings" data-view="settings">
+      <div class="panel">
+        <div class="panel-head"><h2>AI Coach</h2></div>
+        <p class="hint">Bring your own Anthropic API key. It's stored only in this browser's local storage — it is never written into the app's code or included in exports.</p>
+        <label class="field-label" for="api-key-input">Anthropic API key</label>
+        <input type="password" id="api-key-input" placeholder="sk-ant-...">
+        <label class="field-label" for="model-input">Model</label>
+        <input type="text" id="model-input" placeholder="claude-sonnet-5">
+        <button class="btn btn-brass" id="save-key-btn">Save</button>
+        <p class="hint tiny" id="key-status"></p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Daily fuel targets</h2></div>
+        <div class="form-grid">
+          <div>
+            <label class="field-label">Calories</label>
+            <input type="number" id="target-cal" min="0">
+          </div>
+          <div>
+            <label class="field-label">Protein (g)</label>
+            <input type="number" id="target-protein" min="0">
+          </div>
+          <div>
+            <label class="field-label">Carbs (g)</label>
+            <input type="number" id="target-carbs" min="0">
+          </div>
+          <div>
+            <label class="field-label">Fat (g)</label>
+            <input type="number" id="target-fat" min="0">
+          </div>
+        </div>
+        <button class="btn btn-brass" id="save-targets-btn">Save targets</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Your data</h2></div>
+        <p class="hint">Everything lives in this browser only. Export regularly so you don't lose it.</p>
+        <div class="row">
+          <button class="btn btn-outline" id="export-btn">Export backup</button>
+          <label class="btn btn-outline file-btn">
+            Import backup
+            <input type="file" id="import-input" accept="application/json" hidden>
+          </label>
+        </div>
+        <button class="btn btn-danger btn-block" id="reset-btn">Reset all data</button>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>About</h2></div>
+        <p class="hint">IronLog is an independent, self-hosted personal tracker. It was inspired by the feature set of fitness apps like EliteEngine (workout logs, habit tracking, macro tracking, XP ranks, an AI coach) but shares no code, design assets or branding with them, and isn't affiliated with School of Elites or Teekay.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <nav id="tabbar">
+    <button class="tab-btn active" data-target="dashboard">
+      <span class="tab-icon">◆</span><span>Dashboard</span>
+    </button>
+    <button class="tab-btn" data-target="train">
+      <span class="tab-icon">🏋</span><span>Train</span>
+    </button>
+    <button class="tab-btn" data-target="habits">
+      <span class="tab-icon">✓</span><span>Habits</span>
+    </button>
+    <button class="tab-btn" data-target="fuel">
+      <span class="tab-icon">🍽</span><span>Fuel</span>
+    </button>
+    <button class="tab-btn" data-target="coach">
+      <span class="tab-icon">💬</span><span>Coach</span>
+    </button>
+  </nav>
+
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
