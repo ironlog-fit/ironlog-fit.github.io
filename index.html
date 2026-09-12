@@ -45,7 +45,7 @@
   <main id="views">
 
     <!-- DASHBOARD -->
-    <section class="view" id="view-dashboard" data-view="dashboard">
+    <section class="view active" id="view-dashboard" data-view="dashboard">
       <div class="gauge-wrap">
         <svg id="rank-gauge" viewBox="0 0 240 140" aria-hidden="true">
           <path id="gauge-track" d="M 20 120 A 100 100 0 0 1 220 120" />
@@ -72,6 +72,8 @@
           <span class="today-value" id="today-fuel">0 / 0 kcal</span>
         </button>
       </div>
+
+      <div id="streak-risk-banner" class="streak-risk hidden"></div>
 
       <div class="panel">
         <div class="panel-head">
@@ -141,7 +143,7 @@
 
       <div class="panel" id="ai-estimate-panel">
         <div class="panel-head"><h2>Describe a meal</h2></div>
-        <p class="hint">Optional — uses your own API key to estimate macros from a description. Set it up in Settings.</p>
+        <p class="hint">Optional — set up the AI Coach in Settings first (free on-device, or your own API key).</p>
         <div class="row">
           <input type="text" id="ai-food-desc" placeholder="e.g. 2 rotis, dal and a bowl of rice">
           <button class="btn btn-brass" id="ai-estimate-btn">Estimate</button>
@@ -189,14 +191,47 @@
     <!-- SETTINGS -->
     <section class="view" id="view-settings" data-view="settings">
       <div class="panel">
-        <div class="panel-head"><h2>AI Coach</h2></div>
-        <p class="hint">Bring your own Anthropic API key. It's stored only in this browser's local storage — it is never written into the app's code or included in exports.</p>
-        <label class="field-label" for="api-key-input">Anthropic API key</label>
-        <input type="password" id="api-key-input" placeholder="sk-ant-...">
-        <label class="field-label" for="model-input">Model</label>
-        <input type="text" id="model-input" placeholder="claude-sonnet-5">
-        <button class="btn btn-brass" id="save-key-btn">Save</button>
-        <p class="hint tiny" id="key-status"></p>
+        <div class="panel-head"><h2>AI Coach & meal estimator</h2></div>
+        <p class="hint">Powers the Coach tab and the "describe a meal" estimator in Fuel. Pick how it runs:</p>
+        <div class="subnav" id="ai-mode-nav">
+          <button class="pill" data-ai-mode="local">Free · on-device</button>
+          <button class="pill" data-ai-mode="cloud">Cloud · your API key</button>
+        </div>
+
+        <div id="ai-local-panel" class="subview">
+          <p class="hint">Runs a small open-source model entirely in your browser, using your device's GPU. Nothing is sent anywhere, no account or key needed, and it keeps working offline once downloaded. It's noticeably less capable than the cloud option — good for quick tips and rough estimates, not for anything you'd trust blindly.</p>
+          <label class="field-label" for="local-model-select">Model</label>
+          <select id="local-model-select"></select>
+          <div class="row" style="margin-top:10px;">
+            <button class="btn btn-brass" id="load-local-model-btn">Load model</button>
+            <button class="btn btn-outline" id="unload-local-model-btn">Unload</button>
+          </div>
+          <div id="local-model-progress-wrap" class="hidden" style="margin-top:10px;">
+            <div class="macro-bar-track"><div class="macro-bar-fill" id="local-model-progress-fill" style="width:0%"></div></div>
+          </div>
+          <p class="hint tiny" id="local-model-status">Not loaded yet.</p>
+          <p class="hint tiny" id="webgpu-warning"></p>
+        </div>
+
+        <div id="ai-cloud-panel" class="subview hidden">
+          <p class="hint">Bring your own Anthropic API key. It's stored only in this browser's local storage — it is never written into the app's code or included in exports.</p>
+          <label class="field-label" for="api-key-input">Anthropic API key</label>
+          <input type="password" id="api-key-input" placeholder="sk-ant-...">
+          <label class="field-label" for="model-input">Model</label>
+          <input type="text" id="model-input" placeholder="claude-sonnet-5">
+          <button class="btn btn-brass" id="save-key-btn">Save</button>
+          <p class="hint tiny" id="key-status"></p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Reminders</h2></div>
+        <p class="hint">A nudge if your workout or habits aren't done yet by a time you pick. This is a static, no-server app, so this only works while IronLog is open in a tab or shortly after you open it — it can't wake your phone up from fully closed, since that needs a push server this project doesn't have.</p>
+        <div class="row">
+          <button class="btn btn-brass" id="enable-reminders-btn">Enable reminders</button>
+          <input type="time" id="reminder-time-input" value="20:00">
+        </div>
+        <p class="hint tiny" id="reminders-status">Off.</p>
       </div>
 
       <div class="panel">

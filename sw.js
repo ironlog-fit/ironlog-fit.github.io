@@ -44,8 +44,8 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
 
   // Only manage caching for our own same-origin files. Cross-origin
-  // requests (Google Fonts, the Anthropic API) pass straight through
-  // to the network as normal fetches.
+  // requests (Google Fonts, the Anthropic API, local-AI model weights)
+  // pass straight through to the network as normal fetches.
   if (url.origin !== self.location.origin) return;
 
   event.respondWith(
@@ -63,6 +63,18 @@ self.addEventListener('fetch', (event) => {
       // Cache-first for speed and offline support; refresh the cache
       // quietly in the background when online.
       return cached || network;
+    })
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) return client.focus();
+      }
+      if (clients.openWindow) return clients.openWindow('./index.html');
     })
   );
 });

@@ -198,6 +198,28 @@ function renderDashboard() {
     div.textContent = dayLabel;
     strip.appendChild(div);
   }
+
+  renderStreakRiskBanner(streak);
+}
+
+function renderStreakRiskBanner(streak) {
+  const banner = document.getElementById('streak-risk-banner');
+  const t = todayStr();
+  const hour = new Date().getHours();
+  const workoutDone = !!state.workoutDays[t];
+  const habitsDoneToday = Object.values(state.habitLogs[t] || {}).filter(Boolean).length;
+  const habitsAllDone = state.habits.length > 0 && habitsDoneToday >= state.habits.length;
+
+  const atRisk = streak > 0 && hour >= 18 && (!workoutDone || !habitsAllDone);
+  if (!atRisk) {
+    banner.classList.add('hidden');
+    return;
+  }
+  const missing = [];
+  if (!workoutDone) missing.push('a workout');
+  if (!habitsAllDone) missing.push('your habits');
+  banner.textContent = `⚠ Your ${streak}-day streak resets at midnight — log ${missing.join(' and ')} to keep it.`;
+  banner.classList.remove('hidden');
 }
 
 function computeWorkoutStreak() {
@@ -280,7 +302,10 @@ function startSession(templateId) {
       name: ex.name,
       targetSets: ex.sets,
       targetReps: ex.reps,
-      sets: Array.from({ length: ex.sets }, () => ({ weight: '', reps: '', done: false })),
+      // Pre-fill weight from your last PR for this exercise so most of the
+      // time there's nothing to type — just tap through the sets.
+      weight: state.prs[ex.name] ? String(state.prs[ex.name].weight) : '',
+      sets: Array.from({ length: ex.sets }, () => ({ reps: String(ex.reps), done: false })),
     })),
   };
   saveState();
@@ -313,8 +338,7 @@ function renderActiveSession(wrap) {
     const setsHtml = ex.sets.map((set, setIdx) => `
       <div class="set-row">
         <span class="set-num">${setIdx + 1}</span>
-        <input type="number" placeholder="kg" value="${set.weight}" data-ex="${exIdx}" data-set="${setIdx}" data-field="weight">
-        <input type="number" placeholder="reps (target ${ex.targetReps})" value="${set.reps}" data-ex="${exIdx}" data-set="${setIdx}" data-field="reps">
+        <input type="number" inputmode="numeric" placeholder="reps" value="${set.reps}" data-ex="${exIdx}" data-set="${setIdx}" data-field="reps">
         <button class="set-done-btn ${set.done ? 'done' : ''}" data-ex="${exIdx}" data-set="${setIdx}" data-done-toggle>✓</button>
       </div>
     `).join('');
@@ -323,24 +347,34 @@ function renderActiveSession(wrap) {
         <h3>${escapeHtml(ex.name)}</h3>
         <button class="rest-btn" data-rest>Rest 90s</button>
       </div>
+      <div class="weight-row">
+        <label>Weight (kg)</label>
+        <input type="number" inputmode="decimal" placeholder="kg" value="${ex.weight}" data-ex="${exIdx}" data-field="weight" class="weight-input">
+      </div>
       ${setsHtml}
     `;
     wrap.appendChild(block);
 
-    block.querySelectorAll('input').forEach(input => {
+    block.querySelector('.weight-input').addEventListener('input', (e) => {
+      state.activeSession.exercises[exIdx].weight = e.target.value;
+      saveState();
+    });
+    block.querySelectorAll('input[data-field="reps"]').forEach(input => {
       input.addEventListener('input', () => {
-        const exi = +input.dataset.ex, si = +input.dataset.set, field = input.dataset.field;
-        state.activeSession.exercises[exi].sets[si][field] = input.value;
+        const si = +input.dataset.set;
+        state.activeSession.exercises[exIdx].sets[si].reps = input.value;
         saveState();
       });
     });
     block.querySelectorAll('[data-done-toggle]').forEach(btn => {
       btn.addEventListener('click', () => {
-        const exi = +btn.dataset.ex, si = +btn.dataset.set;
-        const set = state.activeSession.exercises[exi].sets[si];
+        const si = +btn.dataset.set;
+        const set = state.activeSession.exercises[exIdx].sets[si];
         set.done = !set.done;
         saveState();
         btn.classList.toggle('done', set.done);
+        // One tap logs the set AND starts your rest — no separate reminder needed.
+        if (set.done) startRestTimer(block.querySelector('[data-rest]'));
       });
     });
     block.querySelector('[data-rest]').addEventListener('click', (e) => startRestTimer(e.target));
@@ -377,9 +411,10 @@ function finishSession() {
   const historyExercises = [];
 
   s.exercises.forEach(ex => {
-    const loggedSets = ex.sets.filter(set => set.done && Number(set.weight) > 0 && Number(set.reps) > 0);
+    const w = Number(ex.weight);
+    const loggedSets = ex.sets.filter(set => set.done && w > 0 && Number(set.reps) > 0);
     loggedSets.forEach(set => {
-      const w = Number(set.weight), r = Number(set.reps);
+      const r = Number(set.reps);
       totalVolume += w * r;
       const currentPR = state.prs[ex.name];
       if (!currentPR || w > currentPR.weight) {
@@ -387,7 +422,7 @@ function finishSession() {
         if (!newPRs.includes(ex.name)) newPRs.push(ex.name);
       }
     });
-    historyExercises.push({ name: ex.name, sets: loggedSets.map(x => ({ weight: Number(x.weight), reps: Number(x.reps) })) });
+    historyExercises.push({ name: ex.name, sets: loggedSets.map(x => ({ weight: w, reps: Number(x.reps) })) });
   });
 
   const totalSetsLogged = historyExercises.reduce((n, e) => n + e.sets.length, 0);
@@ -442,22 +477,36 @@ function renderTemplatesTab() {
       <div class="template-card-head">
         <h3>${escapeHtml(tpl.name)}</h3>
         <div class="row-actions">
-          <button class="link-btn" data-add-ex="${tpl.id}">+ exercise</button>
+          <button class="link-btn" data-show-add-ex="${tpl.id}">+ exercise</button>
           <button class="link-btn danger" data-del-tpl="${tpl.id}">delete</button>
         </div>
       </div>
       ${exercisesHtml || '<div class="hint" style="margin:0;">No exercises yet.</div>'}
+      <form class="add-ex-form hidden" data-add-ex-form="${tpl.id}">
+        <input type="text" placeholder="Exercise name" data-f="name" required>
+        <input type="number" placeholder="Sets" value="3" min="1" data-f="sets" required>
+        <input type="number" placeholder="Reps" value="10" min="1" data-f="reps" required>
+        <button type="submit" class="btn btn-brass" style="flex:none;">Add</button>
+      </form>
     `;
     list.appendChild(card);
   });
 
-  list.querySelectorAll('[data-add-ex]').forEach(btn => {
+  list.querySelectorAll('[data-show-add-ex]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const tpl = state.templates.find(t => t.id === btn.dataset.addEx);
-      const name = prompt('Exercise name?');
+      const form = list.querySelector(`[data-add-ex-form="${btn.dataset.showAddEx}"]`);
+      form.classList.toggle('hidden');
+      if (!form.classList.contains('hidden')) form.querySelector('input').focus();
+    });
+  });
+  list.querySelectorAll('[data-add-ex-form]').forEach(form => {
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const tpl = state.templates.find(t => t.id === form.dataset.addExForm);
+      const name = form.querySelector('[data-f="name"]').value.trim();
+      const sets = Number(form.querySelector('[data-f="sets"]').value) || 3;
+      const reps = Number(form.querySelector('[data-f="reps"]').value) || 10;
       if (!name) return;
-      const sets = Number(prompt('Target sets?', '3')) || 3;
-      const reps = Number(prompt('Target reps?', '10')) || 10;
       tpl.exercises.push({ id: uid(), name, sets, reps });
       saveState();
       renderTemplatesTab();
@@ -650,7 +699,7 @@ function renderFuel() {
     });
   });
 
-  document.getElementById('ai-estimate-panel').classList.toggle('hidden', !getApiKey());
+  document.getElementById('ai-estimate-panel').classList.toggle('hidden', getAiMode() === 'cloud' && !getApiKey());
 }
 
 function logMeal(food) {
@@ -687,15 +736,11 @@ document.getElementById('ai-estimate-btn').addEventListener('click', async () =>
   const desc = document.getElementById('ai-food-desc').value.trim();
   const statusEl = document.getElementById('ai-estimate-status');
   if (!desc) { statusEl.textContent = 'Describe what you ate first.'; return; }
-  const apiKey = getApiKey();
-  if (!apiKey) { statusEl.textContent = 'Add an API key in Settings first.'; return; }
+  if (getAiMode() === 'cloud' && !getApiKey()) { statusEl.textContent = 'Add an API key in Settings first.'; return; }
 
-  statusEl.textContent = 'Estimating…';
+  statusEl.textContent = getAiMode() === 'local' ? 'Estimating… (loading the model the first time can take a while)' : 'Estimating…';
   try {
-    const result = await callClaudeJSON(
-      'You are a nutrition estimator. Given a short description of a meal (possibly in Hinglish, and possibly Indian food), reply with ONLY a JSON object — no prose, no markdown fences — in this exact shape: {"name": string, "calories": number, "protein": number, "carbs": number, "fat": number}. Give a single best estimate for the whole meal as described.',
-      desc
-    );
+    const result = await getMacroEstimate(desc);
     document.getElementById('mf-name').value = result.name || desc;
     document.getElementById('mf-cal').value = Math.round(result.calories || 0);
     document.getElementById('mf-protein').value = Math.round(result.protein || 0);
@@ -714,10 +759,15 @@ document.getElementById('ai-estimate-btn').addEventListener('click', async () =>
 let coachHistory = []; // in-memory only, resets on refresh
 
 function renderCoach() {
-  const hasKey = !!getApiKey();
-  document.getElementById('coach-empty').classList.toggle('hidden', hasKey);
-  document.getElementById('coach-chat-wrap').classList.toggle('hidden', !hasKey);
-  if (hasKey) renderCoachLog();
+  const mode = getAiMode();
+  const ready = mode === 'local' || !!getApiKey();
+  const emptyEl = document.getElementById('coach-empty');
+  emptyEl.querySelector('p').textContent = mode === 'cloud'
+    ? 'Add your own Anthropic API key in Settings to turn on the AI coach. It runs straight from your browser to Anthropic\'s API — nothing passes through a third-party server, and the key never leaves your device.'
+    : 'Switch on the free on-device coach in Settings — it downloads a small model straight to this browser, no key or account needed.';
+  emptyEl.classList.toggle('hidden', ready);
+  document.getElementById('coach-chat-wrap').classList.toggle('hidden', !ready);
+  if (ready) renderCoachLog();
 }
 
 function renderCoachLog() {
@@ -739,15 +789,19 @@ document.getElementById('coach-form').addEventListener('submit', async (e) => {
 
   const thinkingId = 'thinking-' + uid();
   const log = document.getElementById('coach-log');
-  log.insertAdjacentHTML('beforeend', `<div class="msg system" id="${thinkingId}">…</div>`);
+  const loadingMsg = getAiMode() === 'local' ? 'Thinking… (first message loads the model, can take a while)' : '…';
+  log.insertAdjacentHTML('beforeend', `<div class="msg coach" id="${thinkingId}">${escapeHtml(loadingMsg)}</div>`);
   log.scrollTop = log.scrollHeight;
 
   try {
-    const reply = await callClaudeChat(coachHistory);
+    const bubble = document.getElementById(thinkingId);
+    const reply = await getCoachReply(coachHistory, (partial) => {
+      if (bubble) { bubble.textContent = partial || loadingMsg; log.scrollTop = log.scrollHeight; }
+    });
     coachHistory.push({ role: 'assistant', content: reply });
   } catch (err) {
     console.error(err);
-    coachHistory.push({ role: 'assistant', content: 'Something went wrong reaching the API: ' + err.message });
+    coachHistory.push({ role: 'assistant', content: 'Something went wrong: ' + err.message });
   }
   document.getElementById(thinkingId)?.remove();
   renderCoachLog();
@@ -809,20 +863,187 @@ async function callClaudeJSON(system, userText) {
   return JSON.parse(cleaned);
 }
 
+/* ---------------- Local AI (WebLLM, free, on-device) ---------------- */
+const AI_MODE_KEY = 'ironlog_ai_mode';
+const LOCAL_MODEL_KEY = 'ironlog_local_model_id';
+const DEFAULT_LOCAL_MODELS = [
+  { id: 'Llama-3.2-1B-Instruct-q4f16_1-MLC', label: 'Small & fast (~0.9GB download)' },
+  { id: 'Llama-3.2-3B-Instruct-q4f16_1-MLC', label: 'Balanced (~2.2GB download)' },
+  { id: 'Llama-3-8B-Instruct-q4f32_1-MLC', label: 'Best quality (~6GB, needs a strong GPU)' },
+];
+
+function getAiMode() { return localStorage.getItem(AI_MODE_KEY) || 'local'; }
+function setAiMode(mode) { localStorage.setItem(AI_MODE_KEY, mode); }
+function getLocalModelId() { return localStorage.getItem(LOCAL_MODEL_KEY) || DEFAULT_LOCAL_MODELS[0].id; }
+function hasWebGPU() { return 'gpu' in navigator; }
+
+let webllmLib = null;
+let localEngine = null;
+let localEngineModelId = null;
+let modelOptionsPopulated = false;
+
+async function loadWebLLMLib() {
+  if (!webllmLib) webllmLib = await import('https://esm.run/@mlc-ai/web-llm');
+  return webllmLib;
+}
+
+async function populateLocalModelOptions() {
+  if (modelOptionsPopulated) return;
+  modelOptionsPopulated = true;
+  const select = document.getElementById('local-model-select');
+  select.innerHTML = DEFAULT_LOCAL_MODELS.map(m => `<option value="${m.id}">${m.label}</option>`).join('');
+  select.value = getLocalModelId();
+  try {
+    const webllm = await loadWebLLMLib();
+    const known = new Set(DEFAULT_LOCAL_MODELS.map(m => m.id));
+    const extra = (webllm.prebuiltAppConfig?.model_list || [])
+      .map(m => m.model_id)
+      .filter(id => id && !known.has(id));
+    if (extra.length) {
+      const group = document.createElement('optgroup');
+      group.label = 'More models';
+      extra.forEach(id => {
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = id;
+        group.appendChild(opt);
+      });
+      select.appendChild(group);
+      select.value = getLocalModelId();
+    }
+  } catch (e) {
+    console.warn('Could not fetch the full local model list (offline?)', e);
+  }
+}
+
+async function ensureLocalEngine(onProgress) {
+  if (!hasWebGPU()) throw new Error('This browser doesn\'t support WebGPU — try Chrome or Edge, or switch to Cloud mode.');
+  const modelId = getLocalModelId();
+  if (localEngine && localEngineModelId === modelId) return localEngine;
+  const webllm = await loadWebLLMLib();
+  if (localEngine) {
+    try { await localEngine.unload(); } catch (e) { /* ignore */ }
+    localEngine = null;
+  }
+  localEngine = await webllm.CreateMLCEngine(modelId, { initProgressCallback: onProgress });
+  localEngineModelId = modelId;
+  return localEngine;
+}
+
+async function unloadLocalEngineNow() {
+  if (localEngine) {
+    try { await localEngine.unload(); } catch (e) { /* ignore */ }
+  }
+  localEngine = null;
+  localEngineModelId = null;
+}
+
+async function callLocalChat(history, onToken) {
+  const engine = await ensureLocalEngine();
+  const messages = [
+    { role: 'system', content: buildCoachSystemPrompt() },
+    ...history.map(m => ({ role: m.role, content: m.content })),
+  ];
+  const stream = await engine.chat.completions.create({ messages, stream: true });
+  let full = '';
+  for await (const chunk of stream) {
+    full += chunk.choices?.[0]?.delta?.content || '';
+    if (onToken) onToken(full);
+  }
+  return full;
+}
+
+async function callLocalJSON(system, userText) {
+  const engine = await ensureLocalEngine();
+  const res = await engine.chat.completions.create({
+    messages: [{ role: 'system', content: system }, { role: 'user', content: userText }],
+  });
+  const raw = res.choices[0].message.content;
+  const cleaned = raw.replace(/```json|```/g, '').trim();
+  return JSON.parse(cleaned);
+}
+
+const MACRO_SYSTEM_PROMPT = 'You are a nutrition estimator. Given a short description of a meal (possibly in Hinglish, and possibly Indian food), reply with ONLY a JSON object — no prose, no markdown fences — in this exact shape: {"name": string, "calories": number, "protein": number, "carbs": number, "fat": number}. Give a single best estimate for the whole meal as described.';
+
+async function getCoachReply(history, onToken) {
+  if (getAiMode() === 'local') return callLocalChat(history, onToken);
+  return callClaudeChat(history);
+}
+
+async function getMacroEstimate(desc) {
+  if (getAiMode() === 'local') return callLocalJSON(MACRO_SYSTEM_PROMPT, desc);
+  return callClaudeJSON(MACRO_SYSTEM_PROMPT, desc);
+}
+
 /* ================================================================
    SETTINGS
    ================================================================ */
 function renderSettings() {
+  renderAiModeUI();
+  populateLocalModelOptions();
+  if (!hasWebGPU()) {
+    document.getElementById('webgpu-warning').textContent = 'This browser doesn\'t support WebGPU, which local AI needs — try Chrome or Edge (desktop or Android), or use Cloud mode instead.';
+  }
+
   document.getElementById('api-key-input').value = getApiKey();
   document.getElementById('model-input').value = getModel();
-  document.getElementById('key-status').textContent = getApiKey() ? 'A key is saved on this device.' : 'No key saved — AI Coach and meal estimation are off.';
+  document.getElementById('key-status').textContent = getApiKey() ? 'A key is saved on this device.' : 'No key saved.';
 
   const targets = state.nutrition.targets;
   document.getElementById('target-cal').value = targets.calories;
   document.getElementById('target-protein').value = targets.protein;
   document.getElementById('target-carbs').value = targets.carbs;
   document.getElementById('target-fat').value = targets.fat;
+
+  document.getElementById('reminder-time-input').value = getReminderTime();
+  renderReminderStatus();
 }
+
+function renderAiModeUI() {
+  const mode = getAiMode();
+  document.querySelectorAll('#ai-mode-nav .pill').forEach(p => p.classList.toggle('active', p.dataset.aiMode === mode));
+  document.getElementById('ai-local-panel').classList.toggle('hidden', mode !== 'local');
+  document.getElementById('ai-cloud-panel').classList.toggle('hidden', mode !== 'cloud');
+}
+
+document.getElementById('ai-mode-nav').addEventListener('click', (e) => {
+  const btn = e.target.closest('.pill');
+  if (!btn) return;
+  setAiMode(btn.dataset.aiMode);
+  renderAiModeUI();
+});
+
+document.getElementById('local-model-select').addEventListener('change', (e) => {
+  localStorage.setItem(LOCAL_MODEL_KEY, e.target.value);
+  document.getElementById('local-model-status').textContent = 'Model changed — click "Load model" to download and switch to it.';
+});
+
+document.getElementById('load-local-model-btn').addEventListener('click', async () => {
+  const statusEl = document.getElementById('local-model-status');
+  const wrap = document.getElementById('local-model-progress-wrap');
+  const fill = document.getElementById('local-model-progress-fill');
+  wrap.classList.remove('hidden');
+  fill.style.width = '0%';
+  statusEl.textContent = 'Starting…';
+  try {
+    await ensureLocalEngine((p) => {
+      fill.style.width = Math.round((p.progress || 0) * 100) + '%';
+      statusEl.textContent = p.text || 'Loading…';
+    });
+    statusEl.textContent = 'Ready — loaded and cached on this device.';
+    toast('Local model ready');
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Could not load: ' + err.message;
+  }
+});
+
+document.getElementById('unload-local-model-btn').addEventListener('click', async () => {
+  await unloadLocalEngineNow();
+  document.getElementById('local-model-progress-wrap').classList.add('hidden');
+  document.getElementById('local-model-status').textContent = 'Unloaded.';
+  toast('Local model unloaded');
+});
 
 document.getElementById('save-key-btn').addEventListener('click', () => {
   const key = document.getElementById('api-key-input').value.trim();
@@ -945,5 +1166,113 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+/* ================================================================
+   REMINDERS (best-effort — only fires while the app is open)
+   ================================================================ */
+const REMINDERS_ENABLED_KEY = 'ironlog_reminders_enabled';
+const REMINDER_TIME_KEY = 'ironlog_reminder_time';
+const REMINDER_LAST_SHOWN_KEY = 'ironlog_reminder_last_shown';
+
+function remindersEnabled() { return localStorage.getItem(REMINDERS_ENABLED_KEY) === '1'; }
+function getReminderTime() { return localStorage.getItem(REMINDER_TIME_KEY) || '20:00'; }
+
+function renderReminderStatus() {
+  const statusEl = document.getElementById('reminders-status');
+  const btn = document.getElementById('enable-reminders-btn');
+  const supported = 'Notification' in window;
+  if (supported && remindersEnabled() && Notification.permission === 'granted') {
+    statusEl.textContent = `On — nudges around ${getReminderTime()} on days you haven't finished.`;
+    btn.textContent = 'Disable reminders';
+  } else {
+    statusEl.textContent = supported ? 'Off.' : 'Notifications aren\'t supported in this browser.';
+    btn.textContent = 'Enable reminders';
+    btn.disabled = !supported;
+  }
+}
+
+document.getElementById('enable-reminders-btn').addEventListener('click', async () => {
+  if (remindersEnabled()) {
+    localStorage.setItem(REMINDERS_ENABLED_KEY, '0');
+    renderReminderStatus();
+    toast('Reminders off');
+    return;
+  }
+  if (!('Notification' in window)) {
+    toast('This browser doesn\'t support notifications');
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  if (permission !== 'granted') {
+    toast('Notifications were blocked in the browser');
+    renderReminderStatus();
+    return;
+  }
+  localStorage.setItem(REMINDERS_ENABLED_KEY, '1');
+  renderReminderStatus();
+  toast('Reminders on');
+  scheduleTodayReminder();
+});
+
+document.getElementById('reminder-time-input').addEventListener('change', (e) => {
+  localStorage.setItem(REMINDER_TIME_KEY, e.target.value || '20:00');
+  renderReminderStatus();
+  scheduleTodayReminder();
+});
+
+function todayIsIncomplete() {
+  const t = todayStr();
+  const workoutDone = !!state.workoutDays[t];
+  const habitsDoneToday = Object.values(state.habitLogs[t] || {}).filter(Boolean).length;
+  const habitsAllDone = state.habits.length > 0 && habitsDoneToday >= state.habits.length;
+  return !workoutDone || !habitsAllDone;
+}
+
+async function sendReminderNotification() {
+  const title = 'IronLog';
+  const body = 'Today isn\'t logged yet — a quick workout or habit check keeps your streak alive.';
+  try {
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.ready;
+      reg.showNotification(title, { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png' });
+      return;
+    }
+  } catch (e) { /* fall through to plain Notification */ }
+  try { new Notification(title, { body }); } catch (e) { console.warn('Could not show notification', e); }
+}
+
+function maybeSendReminder() {
+  if (!('Notification' in window)) return;
+  if (!remindersEnabled() || Notification.permission !== 'granted') return;
+  const [h, m] = getReminderTime().split(':').map(Number);
+  const now = new Date();
+  const reminderReached = now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m);
+  if (!reminderReached) return;
+  if (localStorage.getItem(REMINDER_LAST_SHOWN_KEY) === todayStr()) return; // once a day
+  if (!todayIsIncomplete()) return; // already done, nothing to nudge about
+  sendReminderNotification();
+  localStorage.setItem(REMINDER_LAST_SHOWN_KEY, todayStr());
+}
+
+let reminderTimeoutId = null;
+function scheduleTodayReminder() {
+  if (reminderTimeoutId) clearTimeout(reminderTimeoutId);
+  if (!remindersEnabled()) return;
+  const [h, m] = getReminderTime().split(':').map(Number);
+  const target = new Date();
+  target.setHours(h, m, 0, 0);
+  const ms = target.getTime() - Date.now();
+  if (ms > 0 && ms < 24 * 60 * 60 * 1000) {
+    reminderTimeoutId = setTimeout(maybeSendReminder, ms);
+  }
+}
+
+if ('Notification' in window) {
+  maybeSendReminder();
+  scheduleTodayReminder();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') maybeSendReminder();
+  });
+}
+
 /* ---------------- init ---------------- */
-renderDashboard();
+switchView('dashboard');

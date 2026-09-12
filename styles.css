@@ -162,6 +162,17 @@ main#views{flex:1;padding:16px;}
 }
 .week-day.done{background:var(--brass-soft);border-color:var(--brass);color:var(--brass);}
 
+/* Streak risk banner */
+.streak-risk{
+  background:rgba(168,80,61,0.16);
+  border:1px solid var(--rust);
+  color:var(--chalk);
+  border-radius:var(--radius-md);
+  padding:10px 14px;
+  font-size:13px;
+  margin-bottom:18px;
+}
+
 /* Quick actions */
 .quick-actions{display:flex;gap:10px;margin-bottom:8px;}
 
@@ -218,6 +229,10 @@ main#views{flex:1;padding:16px;}
 .row-actions{display:flex;gap:8px;}
 .link-btn{background:none;border:none;color:var(--muted);font-size:12.5px;text-decoration:underline;padding:0;}
 .link-btn.danger{color:var(--rust);}
+.add-ex-form{display:flex;gap:6px;margin-top:10px;}
+.add-ex-form input{padding:8px;font-size:13px;}
+.add-ex-form input[data-f="name"]{flex:2;}
+.add-ex-form input[data-f="sets"],.add-ex-form input[data-f="reps"]{flex:1;min-width:0;}
 
 /* Session logging */
 .session-ex-block{
@@ -229,8 +244,10 @@ main#views{flex:1;padding:16px;}
 }
 .session-ex-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
 .session-ex-head h3{font-family:var(--font-display);font-size:18px;font-weight:600;margin:0;}
-.set-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
-.set-num{
+.weight-row{display:flex;align-items:center;gap:10px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px dashed var(--border);}
+.weight-row label{font-size:12.5px;color:var(--muted);flex-shrink:0;}
+.weight-row input{max-width:100px;}
+.set-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}.set-num{
   font-family:var(--font-display);
   color:var(--muted);
   width:20px;
@@ -307,7 +324,7 @@ main#views{flex:1;padding:16px;}
 
 .row{display:flex;gap:8px;}
 .row input{flex:1;}
-input[type="text"],input[type="number"],input[type="password"]{
+input[type="text"],input[type="number"],input[type="password"],input[type="time"],select{
   background:var(--ink);
   border:1px solid var(--border);
   border-radius:var(--radius-sm);
