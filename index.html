@@ -29,7 +29,7 @@
       <span class="wordmark">IronLog</span>
     </div>
     <div class="topbar-right">
-      <button class="icon-btn" id="streak-pill" data-target="dashboard" title="Streak">
+      <button class="icon-btn" id="streak-pill" title="Streak details">
         <span id="streak-flame">🔥</span><span id="streak-count">0</span>
       </button>
       <button class="icon-btn hidden" id="install-btn" title="Install app">⬇ Install</button>
@@ -296,6 +296,16 @@
     </button>
   </nav>
 
+</div>
+
+<div id="streak-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>🔥 Streaks</h2>
+      <button id="streak-modal-close" class="icon-btn" aria-label="Close">×</button>
+    </div>
+    <div id="streak-modal-body"></div>
+  </div>
 </div>
 
 <div id="toast" class="toast"></div>

@@ -237,6 +237,53 @@ function computeWorkoutStreak() {
   return streak;
 }
 
+function computeLongestStreak() {
+  const days = Object.keys(state.workoutDays).filter(d => state.workoutDays[d]).sort();
+  if (days.length === 0) return 0;
+  let longest = 1, run = 1;
+  for (let i = 1; i < days.length; i++) {
+    const diffDays = Math.round((new Date(days[i]) - new Date(days[i - 1])) / 86400000);
+    run = diffDays === 1 ? run + 1 : 1;
+    longest = Math.max(longest, run);
+  }
+  return longest;
+}
+
+function openStreakModal() {
+  const current = computeWorkoutStreak();
+  const longest = Math.max(current, computeLongestStreak());
+  const totalWorkouts = state.history.length;
+
+  const habitsHtml = state.habits.length
+    ? state.habits.map(h => `
+        <div class="modal-row">
+          <span>${escapeHtml(h.name)}</span>
+          <span class="modal-row-val">${h.streak} day${h.streak === 1 ? '' : 's'}</span>
+        </div>`).join('')
+    : '<div class="empty-state">No habits yet.</div>';
+
+  document.getElementById('streak-modal-body').innerHTML = `
+    <div class="modal-stat-grid">
+      <div class="modal-stat"><span class="modal-stat-val">${current}</span><span class="modal-stat-label">Current streak</span></div>
+      <div class="modal-stat"><span class="modal-stat-val">${longest}</span><span class="modal-stat-label">Longest streak</span></div>
+      <div class="modal-stat"><span class="modal-stat-val">${totalWorkouts}</span><span class="modal-stat-label">Total sessions</span></div>
+    </div>
+    <div class="panel-head" style="margin-top:18px;"><h2>Habit streaks</h2></div>
+    ${habitsHtml}
+  `;
+  document.getElementById('streak-modal').classList.remove('hidden');
+}
+
+function closeStreakModal() {
+  document.getElementById('streak-modal').classList.add('hidden');
+}
+
+document.getElementById('streak-pill').addEventListener('click', openStreakModal);
+document.getElementById('streak-modal-close').addEventListener('click', closeStreakModal);
+document.getElementById('streak-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'streak-modal') closeStreakModal();
+});
+
 /* ================================================================
    TRAIN
    ================================================================ */
@@ -749,7 +796,7 @@ document.getElementById('ai-estimate-btn').addEventListener('click', async () =>
     statusEl.textContent = 'Estimated — review the numbers below, then add.';
   } catch (err) {
     console.error(err);
-    statusEl.textContent = 'Could not estimate: ' + err.message;
+    statusEl.textContent = 'Could not estimate: ' + friendlyAiError(err);
   }
 });
 
@@ -801,7 +848,7 @@ document.getElementById('coach-form').addEventListener('submit', async (e) => {
     coachHistory.push({ role: 'assistant', content: reply });
   } catch (err) {
     console.error(err);
-    coachHistory.push({ role: 'assistant', content: 'Something went wrong: ' + err.message });
+    coachHistory.push({ role: 'assistant', content: 'Something went wrong: ' + friendlyAiError(err) });
   }
   document.getElementById(thinkingId)?.remove();
   renderCoachLog();
@@ -876,6 +923,54 @@ function getAiMode() { return localStorage.getItem(AI_MODE_KEY) || 'local'; }
 function setAiMode(mode) { localStorage.setItem(AI_MODE_KEY, mode); }
 function getLocalModelId() { return localStorage.getItem(LOCAL_MODEL_KEY) || DEFAULT_LOCAL_MODELS[0].id; }
 function hasWebGPU() { return 'gpu' in navigator; }
+
+// Most prebuilt WebLLM models need a GPU/driver/browser combo that supports
+// at least 32KB of compute workgroup storage. Below that, model loading
+// fails with a cryptic native error — so we check ahead of time and explain
+// it in plain terms instead of just surfacing that error.
+const NEEDED_WORKGROUP_STORAGE = 32768;
+
+async function checkGpuCapability() {
+  if (!hasWebGPU()) return { ok: false, reason: 'unsupported' };
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) return { ok: false, reason: 'no-adapter' };
+    const storage = adapter.limits.maxComputeWorkgroupStorageSize;
+    if (storage < NEEDED_WORKGROUP_STORAGE) return { ok: false, reason: 'low-limits', storage };
+    return { ok: true, storage };
+  } catch (e) {
+    return { ok: false, reason: 'error', error: e };
+  }
+}
+
+function gpuCapabilityMessage(check) {
+  switch (check.reason) {
+    case 'unsupported':
+      return 'This browser doesn\'t support WebGPU, which local AI needs. Try Chrome or Edge (desktop or Android), or use Cloud mode instead.';
+    case 'no-adapter':
+      return 'No compatible GPU was found for WebGPU here. Try a different browser, update your GPU drivers, or use Cloud mode instead.';
+    case 'low-limits':
+      return `This device's GPU/browser only supports ${check.storage} of the compute memory most models need (they typically need ${NEEDED_WORKGROUP_STORAGE}) — loading will likely fail with a native error. This is a real hardware/driver limit, not a setting in this app. Chrome or Edge tend to support WebGPU best, and updating your GPU drivers can help — otherwise, use Cloud mode instead.`;
+    default:
+      return 'Could not check WebGPU support on this device. You can still try loading a model, or use Cloud mode instead.';
+  }
+}
+
+// Turns the native, technical errors WebLLM/WebGPU throw into something a
+// person can actually act on.
+function friendlyAiError(err) {
+  const msg = String((err && err.message) || err);
+  if (/maxComputeWorkgroupStorageSize|exceeds limit/i.test(msg)) {
+    return 'This device\'s GPU/browser doesn\'t support enough compute memory to run this model — a hardware/driver limit, not something this app can override. Try Chrome or Edge, update your GPU drivers, try a smaller model, or switch to Cloud mode in Settings.';
+  }
+  if (/webgpu/i.test(msg)) {
+    return 'This browser doesn\'t support WebGPU, which local AI needs. Try Chrome or Edge, or switch to Cloud mode in Settings.';
+  }
+  if (/out of memory|oom/i.test(msg)) {
+    return 'Ran out of memory loading this model. Try a smaller model, close other tabs/apps, or switch to Cloud mode.';
+  }
+  return msg;
+}
 
 let webllmLib = null;
 let localEngine = null;
@@ -981,9 +1076,11 @@ async function getMacroEstimate(desc) {
 function renderSettings() {
   renderAiModeUI();
   populateLocalModelOptions();
-  if (!hasWebGPU()) {
-    document.getElementById('webgpu-warning').textContent = 'This browser doesn\'t support WebGPU, which local AI needs — try Chrome or Edge (desktop or Android), or use Cloud mode instead.';
-  }
+  const webgpuWarningEl = document.getElementById('webgpu-warning');
+  webgpuWarningEl.textContent = 'Checking this device\'s GPU support…';
+  checkGpuCapability().then((check) => {
+    webgpuWarningEl.textContent = check.ok ? '' : gpuCapabilityMessage(check);
+  });
 
   document.getElementById('api-key-input').value = getApiKey();
   document.getElementById('model-input').value = getModel();
@@ -1034,7 +1131,7 @@ document.getElementById('load-local-model-btn').addEventListener('click', async 
     toast('Local model ready');
   } catch (err) {
     console.error(err);
-    statusEl.textContent = 'Could not load: ' + err.message;
+    statusEl.textContent = 'Could not load: ' + friendlyAiError(err);
   }
 });
 

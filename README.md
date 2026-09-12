@@ -46,6 +46,7 @@ Settings → **AI Coach & meal estimator** lets you pick how it runs:
 - Needs a browser with WebGPU support — current Chrome or Edge (desktop or Android) work well. If your browser doesn't support it, the app tells you and you can switch to Cloud mode instead.
 - Being honest about the trade-off: a small on-device model is genuinely weaker than Claude — good for quick coaching tips and rough macro guesses, not something to trust blindly for anything that matters. Double-check macro estimates before logging.
 - You can load, switch, or unload the model from Settings any time.
+- **Known limitation**: some GPU/browser/driver combinations only support 16KB of "compute workgroup storage," while most prebuilt WebLLM models need 32KB. If you hit an error mentioning `maxComputeWorkgroupStorageSize`, that's this — a real hardware/driver ceiling, not a bug in this app or something a setting can fix. The Settings screen checks for this ahead of time and tells you if your device is likely affected. Chrome or Edge (updated to a recent version) support WebGPU best; updating GPU drivers can also help. Otherwise, Cloud mode sidesteps the issue entirely since it doesn't use your GPU at all.
 
 **Cloud · your API key (optional).** Calls the Anthropic API **directly from your browser**, using your own key:
 - Get a key at [console.anthropic.com](https://console.anthropic.com), then paste it into Settings.
