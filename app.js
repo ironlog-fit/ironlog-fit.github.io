@@ -17,7 +17,7 @@ const RANKS = [
   { name: 'Apex',     min: 7000 },
 ];
 
-const DEFAULT_TEMPLATES = [
+const PPL_TEMPLATES = [
   { id: 'tpl_push', name: 'Push Day', exercises: [
     { id: uid(), name: 'Bench Press', sets: 4, reps: 8 },
     { id: uid(), name: 'Overhead Press', sets: 3, reps: 10 },
@@ -37,6 +37,60 @@ const DEFAULT_TEMPLATES = [
     { id: uid(), name: 'Calf Raise', sets: 4, reps: 15 },
   ]},
 ];
+
+// One template per muscle group, for anyone who prefers a classic
+// "bro split" over the combined Push/Pull/Legs days above.
+const MUSCLE_TEMPLATES = [
+  { id: 'tpl_chest', name: 'Chest', exercises: [
+    { id: uid(), name: 'Barbell Bench Press', sets: 4, reps: 8 },
+    { id: uid(), name: 'Incline Dumbbell Press', sets: 3, reps: 10 },
+    { id: uid(), name: 'Chest Fly', sets: 3, reps: 12 },
+    { id: uid(), name: 'Cable Crossover', sets: 3, reps: 15 },
+    { id: uid(), name: 'Dips', sets: 3, reps: 12 },
+  ]},
+  { id: 'tpl_back', name: 'Back', exercises: [
+    { id: uid(), name: 'Deadlift', sets: 4, reps: 6 },
+    { id: uid(), name: 'Pull-Ups', sets: 4, reps: 8 },
+    { id: uid(), name: 'Barbell Row', sets: 3, reps: 10 },
+    { id: uid(), name: 'Seated Cable Row', sets: 3, reps: 12 },
+    { id: uid(), name: 'Face Pull', sets: 3, reps: 15 },
+  ]},
+  { id: 'tpl_shoulders', name: 'Shoulders', exercises: [
+    { id: uid(), name: 'Overhead Press', sets: 4, reps: 8 },
+    { id: uid(), name: 'Lateral Raise', sets: 3, reps: 15 },
+    { id: uid(), name: 'Front Raise', sets: 3, reps: 12 },
+    { id: uid(), name: 'Rear Delt Fly', sets: 3, reps: 15 },
+    { id: uid(), name: 'Shrugs', sets: 3, reps: 12 },
+  ]},
+  { id: 'tpl_legs_iso', name: 'Legs', exercises: [
+    { id: uid(), name: 'Squat', sets: 4, reps: 8 },
+    { id: uid(), name: 'Romanian Deadlift', sets: 3, reps: 10 },
+    { id: uid(), name: 'Leg Press', sets: 3, reps: 12 },
+    { id: uid(), name: 'Leg Curl', sets: 3, reps: 12 },
+    { id: uid(), name: 'Leg Extension', sets: 3, reps: 12 },
+    { id: uid(), name: 'Calf Raise', sets: 4, reps: 15 },
+  ]},
+  { id: 'tpl_biceps', name: 'Biceps', exercises: [
+    { id: uid(), name: 'Barbell Curl', sets: 4, reps: 10 },
+    { id: uid(), name: 'Hammer Curl', sets: 3, reps: 12 },
+    { id: uid(), name: 'Preacher Curl', sets: 3, reps: 12 },
+    { id: uid(), name: 'Concentration Curl', sets: 3, reps: 12 },
+  ]},
+  { id: 'tpl_triceps', name: 'Triceps', exercises: [
+    { id: uid(), name: 'Close-Grip Bench Press', sets: 4, reps: 8 },
+    { id: uid(), name: 'Tricep Pushdown', sets: 3, reps: 12 },
+    { id: uid(), name: 'Overhead Tricep Extension', sets: 3, reps: 12 },
+    { id: uid(), name: 'Skull Crushers', sets: 3, reps: 10 },
+  ]},
+  { id: 'tpl_abs', name: 'Abs & Core', exercises: [
+    { id: uid(), name: 'Hanging Leg Raise', sets: 3, reps: 15 },
+    { id: uid(), name: 'Cable Crunch', sets: 3, reps: 15 },
+    { id: uid(), name: 'Plank (seconds)', sets: 3, reps: 60 },
+    { id: uid(), name: 'Russian Twist', sets: 3, reps: 20 },
+  ]},
+];
+
+const DEFAULT_TEMPLATES = [...PPL_TEMPLATES, ...MUSCLE_TEMPLATES];
 
 const DEFAULT_HABITS = [
   'Sleep 7+ hours', 'Stretch / mobility', 'Sunlight or a walk',
@@ -78,6 +132,7 @@ function defaultState() {
       logs: {},
     },
     workoutDays: {}, // dateStr -> true
+    seededMuscleTemplates: true, // brand-new installs already have everything
   };
 }
 
@@ -89,7 +144,21 @@ function loadState() {
     if (!raw) return defaultState();
     const parsed = JSON.parse(raw);
     // shallow-merge with defaults so new fields don't break old saves
-    return Object.assign(defaultState(), parsed);
+    const merged = Object.assign(defaultState(), parsed);
+
+    // One-time migration: give people who already had this app installed
+    // the new per-muscle templates too, without touching anything they've
+    // already customized or deleted. Runs once, tracked by a flag, so
+    // deleting one of these afterward is respected on future loads.
+    if (!parsed.seededMuscleTemplates) {
+      const existingIds = new Set((merged.templates || []).map(t => t.id));
+      const toAdd = MUSCLE_TEMPLATES.filter(t => !existingIds.has(t.id));
+      merged.templates = [...(merged.templates || []), ...JSON.parse(JSON.stringify(toAdd))];
+      merged.seededMuscleTemplates = true;
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch (e) { /* will save on next action anyway */ }
+    }
+
+    return merged;
   } catch (e) {
     console.error('Failed to load state, starting fresh.', e);
     return defaultState();
@@ -116,6 +185,78 @@ function toast(msg) {
   el.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+/* ---------------- Generic in-app modal (replaces confirm/alert/prompt) ---------------- */
+function openGenericModal({ title, bodyHtml, buttons, onOpen }) {
+  document.getElementById('generic-modal-title').textContent = title;
+  document.getElementById('generic-modal-body').innerHTML = bodyHtml;
+  const btnWrap = document.getElementById('generic-modal-buttons');
+  btnWrap.innerHTML = '';
+  buttons.forEach(b => {
+    const btnEl = document.createElement('button');
+    btnEl.type = 'button';
+    btnEl.className = 'btn ' + (b.className || 'btn-outline');
+    btnEl.textContent = b.text;
+    btnEl.addEventListener('click', () => { closeGenericModal(); b.onClick(); });
+    btnWrap.appendChild(btnEl);
+  });
+  document.getElementById('generic-modal').classList.remove('hidden');
+  if (onOpen) setTimeout(onOpen, 0);
+}
+
+function closeGenericModal() {
+  document.getElementById('generic-modal').classList.add('hidden');
+}
+
+document.getElementById('generic-modal-close').addEventListener('click', closeGenericModal);
+document.getElementById('generic-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'generic-modal') closeGenericModal();
+});
+
+// Drop-in, promise-based replacements for the browser's native confirm/alert/prompt.
+function showConfirm(message, opts = {}) {
+  return new Promise((resolve) => {
+    let resolved = false;
+    openGenericModal({
+      title: opts.title || 'Are you sure?',
+      bodyHtml: `<p class="hint" style="margin:0;">${escapeHtml(message)}</p>`,
+      buttons: [
+        { text: opts.cancelText || 'Cancel', className: 'btn-outline', onClick: () => { resolved = true; resolve(false); } },
+        { text: opts.confirmText || 'Confirm', className: opts.danger ? 'btn-danger' : 'btn-brass', onClick: () => { resolved = true; resolve(true); } },
+      ],
+    });
+    // Closing via the × or backdrop counts as "cancel".
+    const cleanup = () => { if (!resolved) resolve(false); };
+    document.getElementById('generic-modal-close').addEventListener('click', cleanup, { once: true });
+  });
+}
+
+function showAlert(message, opts = {}) {
+  return new Promise((resolve) => {
+    openGenericModal({
+      title: opts.title || 'Notice',
+      bodyHtml: `<p class="hint" style="margin:0;">${escapeHtml(message)}</p>`,
+      buttons: [{ text: 'OK', className: 'btn-brass', onClick: () => resolve() }],
+    });
+  });
+}
+
+function showPrompt(message, defaultValue = '', opts = {}) {
+  return new Promise((resolve) => {
+    let resolved = false;
+    openGenericModal({
+      title: opts.title || 'Enter a value',
+      bodyHtml: `<p class="hint" style="margin:0 0 10px;">${escapeHtml(message)}</p><input type="text" id="generic-modal-input" value="${escapeHtml(defaultValue)}">`,
+      buttons: [
+        { text: 'Cancel', className: 'btn-outline', onClick: () => { resolved = true; resolve(null); } },
+        { text: 'OK', className: 'btn-brass', onClick: () => { resolved = true; resolve((document.getElementById('generic-modal-input').value || '').trim() || null); } },
+      ],
+      onOpen: () => document.getElementById('generic-modal-input')?.focus(),
+    });
+    const cleanup = () => { if (!resolved) resolve(null); };
+    document.getElementById('generic-modal-close').addEventListener('click', cleanup, { once: true });
+  });
 }
 
 /* ---------------- XP / Rank ---------------- */
@@ -371,8 +512,8 @@ function renderActiveSession(wrap) {
     <p class="hint" style="margin:0;">Log each set as you go, then finish to save it and earn XP.</p>
   `;
   wrap.appendChild(head);
-  head.querySelector('#cancel-session').addEventListener('click', () => {
-    if (confirm('Cancel this session? Nothing will be saved.')) {
+  head.querySelector('#cancel-session').addEventListener('click', async () => {
+    if (await showConfirm('Cancel this session? Nothing will be saved.', { confirmText: 'Cancel session', cancelText: 'Keep going', danger: true })) {
       state.activeSession = null;
       saveState();
       renderSessionTab();
@@ -385,7 +526,8 @@ function renderActiveSession(wrap) {
     const setsHtml = ex.sets.map((set, setIdx) => `
       <div class="set-row">
         <span class="set-num">${setIdx + 1}</span>
-        <input type="number" inputmode="numeric" placeholder="reps" value="${set.reps}" data-ex="${exIdx}" data-set="${setIdx}" data-field="reps">
+        <input type="number" inputmode="numeric" value="${set.reps}" data-ex="${exIdx}" data-set="${setIdx}" data-field="reps">
+        <span class="set-unit">reps</span>
         <button class="set-done-btn ${set.done ? 'done' : ''}" data-ex="${exIdx}" data-set="${setIdx}" data-done-toggle>✓</button>
       </div>
     `).join('');
@@ -397,6 +539,11 @@ function renderActiveSession(wrap) {
       <div class="weight-row">
         <label>Weight (kg)</label>
         <input type="number" inputmode="decimal" placeholder="kg" value="${ex.weight}" data-ex="${exIdx}" data-field="weight" class="weight-input">
+      </div>
+      <div class="set-header">
+        <span class="set-header-spacer"></span>
+        <span class="set-header-label">Reps</span>
+        <span class="set-header-spacer"></span>
       </div>
       ${setsHtml}
     `;
@@ -451,7 +598,7 @@ function startRestTimer(btn) {
   }, 1000);
 }
 
-function finishSession() {
+async function finishSession() {
   const s = state.activeSession;
   let totalVolume = 0;
   let newPRs = [];
@@ -474,7 +621,7 @@ function finishSession() {
 
   const totalSetsLogged = historyExercises.reduce((n, e) => n + e.sets.length, 0);
   if (totalSetsLogged === 0) {
-    if (!confirm('No sets were logged. Finish anyway without saving to history?')) return;
+    if (!(await showConfirm('No sets were logged. Finish anyway without saving to history?', { confirmText: 'Finish anyway', cancelText: 'Keep logging' }))) return;
     state.activeSession = null;
     saveState();
     renderSessionTab();
@@ -560,8 +707,8 @@ function renderTemplatesTab() {
     });
   });
   list.querySelectorAll('[data-del-tpl]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (!confirm('Delete this template?')) return;
+    btn.addEventListener('click', async () => {
+      if (!(await showConfirm('Delete this template? This can\'t be undone.', { confirmText: 'Delete', danger: true }))) return;
       state.templates = state.templates.filter(t => t.id !== btn.dataset.delTpl);
       saveState();
       renderTemplatesTab();
@@ -569,8 +716,8 @@ function renderTemplatesTab() {
   });
 }
 
-document.getElementById('add-template-btn').addEventListener('click', () => {
-  const name = prompt('Template name (e.g. "Upper Body")?');
+document.getElementById('add-template-btn').addEventListener('click', async () => {
+  const name = await showPrompt('Name this template (e.g. "Upper Body")');
   if (!name) return;
   state.templates.push({ id: uid(), name, exercises: [] });
   saveState();
@@ -639,8 +786,8 @@ function renderHabits() {
     });
   });
   list.querySelectorAll('[data-remove]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (!confirm('Remove this habit?')) return;
+    btn.addEventListener('click', async () => {
+      if (!(await showConfirm('Remove this habit? Its streak history goes with it.', { confirmText: 'Remove', danger: true }))) return;
       state.habits = state.habits.filter(h => h.id !== btn.dataset.remove);
       saveState();
       renderHabits();
@@ -677,8 +824,8 @@ function toggleHabit(id) {
   renderHabits();
 }
 
-document.getElementById('add-habit-btn').addEventListener('click', () => {
-  const name = prompt('New habit name?');
+document.getElementById('add-habit-btn').addEventListener('click', async () => {
+  const name = await showPrompt('Name your new habit');
   if (!name) return;
   state.habits.push({ id: uid(), name, streak: 0, lastDate: null });
   saveState();
@@ -932,27 +1079,37 @@ const NEEDED_WORKGROUP_STORAGE = 32768;
 
 async function checkGpuCapability() {
   if (!hasWebGPU()) return { ok: false, reason: 'unsupported' };
+  let adapter;
   try {
-    const adapter = await navigator.gpu.requestAdapter();
-    if (!adapter) return { ok: false, reason: 'no-adapter' };
-    const storage = adapter.limits.maxComputeWorkgroupStorageSize;
-    if (storage < NEEDED_WORKGROUP_STORAGE) return { ok: false, reason: 'low-limits', storage };
-    return { ok: true, storage };
+    adapter = await navigator.gpu.requestAdapter();
   } catch (e) {
-    return { ok: false, reason: 'error', error: e };
+    return { ok: false, reason: 'no-adapter', error: e };
   }
+  if (!adapter) return { ok: false, reason: 'no-adapter' };
+  const storage = adapter.limits.maxComputeWorkgroupStorageSize;
+  if (storage < NEEDED_WORKGROUP_STORAGE) return { ok: false, reason: 'low-limits', storage };
+  // Finding an adapter isn't enough — actually creating a device is where
+  // "adapter exists but the browser/OS/driver can't really use it" shows up.
+  try {
+    const device = await adapter.requestDevice();
+    device.destroy?.();
+  } catch (e) {
+    return { ok: false, reason: 'device-failed', error: e };
+  }
+  return { ok: true, storage };
 }
 
 function gpuCapabilityMessage(check) {
   switch (check.reason) {
     case 'unsupported':
-      return 'This browser doesn\'t support WebGPU, which local AI needs. Try Chrome or Edge (desktop or Android), or use Cloud mode instead.';
+      return 'This browser has no WebGPU API at all, so local AI will automatically use a slower CPU model instead. Chrome or Edge (desktop or Android) support WebGPU and would run it faster.';
     case 'no-adapter':
-      return 'No compatible GPU was found for WebGPU here. Try a different browser, update your GPU drivers, or use Cloud mode instead.';
+    case 'device-failed':
+      return 'Your browser can\'t get a working GPU device here (often hardware acceleration being off, outdated GPU drivers, or a laptop routing the browser to the wrong GPU — chrome://gpu can confirm), so local AI will automatically use a slower CPU model instead. Fixing the GPU access would make it noticeably faster.';
     case 'low-limits':
-      return `This device's GPU/browser only supports ${check.storage} of the compute memory most models need (they typically need ${NEEDED_WORKGROUP_STORAGE}) — loading will likely fail with a native error. This is a real hardware/driver limit, not a setting in this app. Chrome or Edge tend to support WebGPU best, and updating your GPU drivers can help — otherwise, use Cloud mode instead.`;
+      return `This device's GPU/browser only supports ${check.storage} of the compute memory most GPU models need (they typically need ${NEEDED_WORKGROUP_STORAGE}), so local AI will automatically use a slower CPU model instead. Updating GPU drivers or trying Chrome/Edge can sometimes unlock the faster GPU path.`;
     default:
-      return 'Could not check WebGPU support on this device. You can still try loading a model, or use Cloud mode instead.';
+      return 'Could not check WebGPU support on this device — local AI will fall back to a CPU model automatically if the GPU path doesn\'t work.';
   }
 }
 
@@ -963,11 +1120,17 @@ function friendlyAiError(err) {
   if (/maxComputeWorkgroupStorageSize|exceeds limit/i.test(msg)) {
     return 'This device\'s GPU/browser doesn\'t support enough compute memory to run this model — a hardware/driver limit, not something this app can override. Try Chrome or Edge, update your GPU drivers, try a smaller model, or switch to Cloud mode in Settings.';
   }
+  if (/unable to find a compatible gpu|no.{0,10}adapter/i.test(msg)) {
+    return 'No working GPU device was found. In Chrome/Edge, check chrome://gpu for a diagnosis — this is usually hardware acceleration being off, outdated drivers, or a laptop with no WebGPU-capable GPU exposed to the browser. Cloud mode in Settings works regardless of GPU.';
+  }
   if (/webgpu/i.test(msg)) {
     return 'This browser doesn\'t support WebGPU, which local AI needs. Try Chrome or Edge, or switch to Cloud mode in Settings.';
   }
   if (/out of memory|oom/i.test(msg)) {
     return 'Ran out of memory loading this model. Try a smaller model, close other tabs/apps, or switch to Cloud mode.';
+  }
+  if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+    return 'Could not download the model — check your internet connection and try again. Local AI (GPU or CPU) needs to download the model at least once; Cloud mode needs a much smaller connection since it doesn\'t download anything.';
   }
   return msg;
 }
@@ -1031,31 +1194,115 @@ async function unloadLocalEngineNow() {
   }
   localEngine = null;
   localEngineModelId = null;
+  cpuGenerator = null; // just drop the reference; the runtime frees it on GC
 }
 
-async function callLocalChat(history, onToken) {
-  const engine = await ensureLocalEngine();
+/* ---------------- CPU/WASM fallback (transformers.js) ----------------
+   WebLLM needs WebGPU, which plenty of laptops either don't expose to the
+   browser or don't support well enough (see checkGpuCapability above).
+   transformers.js runs on the CPU via WASM by default — no GPU required
+   at all — so when the GPU path fails, we fall back to it automatically
+   instead of just telling the person to switch to Cloud mode. It's slower
+   and the model is smaller/weaker, but it works on essentially any device. */
+const CPU_FALLBACK_MODEL = 'onnx-community/Qwen2.5-0.5B-Instruct';
+
+let transformersLib = null;
+let cpuGenerator = null;
+
+async function loadTransformersLib() {
+  if (!transformersLib) transformersLib = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4');
+  return transformersLib;
+}
+
+async function ensureCpuFallbackEngine(onProgress) {
+  if (cpuGenerator) return cpuGenerator;
+  const { pipeline } = await loadTransformersLib();
+  cpuGenerator = await pipeline('text-generation', CPU_FALLBACK_MODEL, {
+    dtype: 'q4',
+    progress_callback: onProgress,
+  });
+  return cpuGenerator;
+}
+
+function extractGeneratedText(output) {
+  const generated = output?.[0]?.generated_text;
+  if (Array.isArray(generated)) return generated[generated.length - 1]?.content || '';
+  return String(generated || '');
+}
+
+async function callCpuChat(history, onToken) {
+  const generator = await ensureCpuFallbackEngine();
+  if (onToken) onToken('Thinking on CPU — this is noticeably slower than GPU or Cloud…');
   const messages = [
     { role: 'system', content: buildCoachSystemPrompt() },
     ...history.map(m => ({ role: m.role, content: m.content })),
   ];
-  const stream = await engine.chat.completions.create({ messages, stream: true });
-  let full = '';
-  for await (const chunk of stream) {
-    full += chunk.choices?.[0]?.delta?.content || '';
-    if (onToken) onToken(full);
+  const output = await generator(messages, { max_new_tokens: 300 });
+  return extractGeneratedText(output).trim();
+}
+
+async function callCpuJSON(system, userText) {
+  const generator = await ensureCpuFallbackEngine();
+  const output = await generator([
+    { role: 'system', content: system },
+    { role: 'user', content: userText },
+  ], { max_new_tokens: 200 });
+  const raw = extractGeneratedText(output);
+  const cleaned = raw.replace(/```json|```/g, '').trim();
+  return JSON.parse(cleaned);
+}
+
+// Tries the GPU engine first; if that fails for any GPU-shaped reason,
+// silently drops to the CPU model instead of surfacing the error.
+async function ensureLocalOrFallback(onProgress) {
+  try {
+    const engine = await ensureLocalEngine(onProgress);
+    return { engine, backend: 'gpu' };
+  } catch (gpuErr) {
+    console.warn('GPU local AI failed, falling back to CPU:', gpuErr);
+    if (onProgress) onProgress({ progress: 0, text: 'No usable GPU — switching to a CPU model (slower, first download can take a while)…' });
+    const generator = await ensureCpuFallbackEngine((p) => {
+      if (!onProgress) return;
+      const pct = typeof p?.progress === 'number' ? p.progress / 100 : undefined;
+      onProgress({ progress: pct, text: [p?.status, p?.file].filter(Boolean).join(' ') || 'Downloading CPU model…' });
+    });
+    return { engine: generator, backend: 'cpu' };
   }
-  return full;
+}
+
+async function callLocalChat(history, onToken) {
+  try {
+    const engine = await ensureLocalEngine();
+    const messages = [
+      { role: 'system', content: buildCoachSystemPrompt() },
+      ...history.map(m => ({ role: m.role, content: m.content })),
+    ];
+    const stream = await engine.chat.completions.create({ messages, stream: true });
+    let full = '';
+    for await (const chunk of stream) {
+      full += chunk.choices?.[0]?.delta?.content || '';
+      if (onToken) onToken(full);
+    }
+    return full;
+  } catch (gpuErr) {
+    console.warn('GPU coach reply failed, falling back to CPU:', gpuErr);
+    return callCpuChat(history, onToken);
+  }
 }
 
 async function callLocalJSON(system, userText) {
-  const engine = await ensureLocalEngine();
-  const res = await engine.chat.completions.create({
-    messages: [{ role: 'system', content: system }, { role: 'user', content: userText }],
-  });
-  const raw = res.choices[0].message.content;
-  const cleaned = raw.replace(/```json|```/g, '').trim();
-  return JSON.parse(cleaned);
+  try {
+    const engine = await ensureLocalEngine();
+    const res = await engine.chat.completions.create({
+      messages: [{ role: 'system', content: system }, { role: 'user', content: userText }],
+    });
+    const raw = res.choices[0].message.content;
+    const cleaned = raw.replace(/```json|```/g, '').trim();
+    return JSON.parse(cleaned);
+  } catch (gpuErr) {
+    console.warn('GPU macro estimate failed, falling back to CPU:', gpuErr);
+    return callCpuJSON(system, userText);
+  }
 }
 
 const MACRO_SYSTEM_PROMPT = 'You are a nutrition estimator. Given a short description of a meal (possibly in Hinglish, and possibly Indian food), reply with ONLY a JSON object — no prose, no markdown fences — in this exact shape: {"name": string, "calories": number, "protein": number, "carbs": number, "fat": number}. Give a single best estimate for the whole meal as described.';
@@ -1123,11 +1370,13 @@ document.getElementById('load-local-model-btn').addEventListener('click', async 
   fill.style.width = '0%';
   statusEl.textContent = 'Starting…';
   try {
-    await ensureLocalEngine((p) => {
-      fill.style.width = Math.round((p.progress || 0) * 100) + '%';
+    const { backend } = await ensureLocalOrFallback((p) => {
+      if (typeof p.progress === 'number') fill.style.width = Math.round(p.progress * 100) + '%';
       statusEl.textContent = p.text || 'Loading…';
     });
-    statusEl.textContent = 'Ready — loaded and cached on this device.';
+    statusEl.textContent = backend === 'gpu'
+      ? 'Ready — running on your GPU, loaded and cached on this device.'
+      : 'Ready — running on CPU (no usable GPU found here, so responses will be noticeably slower).';
     toast('Local model ready');
   } catch (err) {
     console.error(err);
@@ -1178,7 +1427,7 @@ document.getElementById('import-input').addEventListener('change', (e) => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const imported = JSON.parse(reader.result);
       state = Object.assign(defaultState(), imported);
@@ -1186,16 +1435,16 @@ document.getElementById('import-input').addEventListener('change', (e) => {
       toast('Backup imported');
       switchView('dashboard');
     } catch (err) {
-      alert('That file could not be read as a valid backup.');
+      await showAlert('That file could not be read as a valid backup.');
     }
   };
   reader.readAsText(file);
   e.target.value = '';
 });
 
-document.getElementById('reset-btn').addEventListener('click', () => {
-  if (!confirm('This deletes all workouts, habits, nutrition logs and XP on this device. This cannot be undone. Continue?')) return;
-  if (!confirm('Really sure? Consider exporting a backup first.')) return;
+document.getElementById('reset-btn').addEventListener('click', async () => {
+  if (!(await showConfirm('This deletes all workouts, habits, nutrition logs and XP on this device. This cannot be undone.', { title: 'Reset all data?', confirmText: 'Continue', danger: true }))) return;
+  if (!(await showConfirm('Really sure? Consider exporting a backup first.', { title: 'Last chance', confirmText: 'Reset everything', danger: true }))) return;
   state = defaultState();
   saveState();
   toast('All data reset');
