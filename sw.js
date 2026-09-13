@@ -1,7 +1,7 @@
 // IronLog service worker — caches the app shell so the tracker works
 // offline once it's been opened at least once. Never touches API calls.
 
-const CACHE_NAME = 'ironlog-shell-v1';
+const CACHE_NAME = 'ironlog-shell-v2';
 
 const CORE_ASSETS = [
   './',
@@ -69,12 +69,20 @@ self.addEventListener('fetch', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const targetPath = (event.notification.data && event.notification.data.url) || './index.html';
+  const targetUrl = new URL(targetPath, self.location.href).href;
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
-        if ('focus' in client) return client.focus();
+        if ('focus' in client) {
+          client.focus();
+          if ('navigate' in client) {
+            client.navigate(targetUrl).catch(() => {});
+          }
+          return;
+        }
       }
-      if (clients.openWindow) return clients.openWindow('./index.html');
+      if (clients.openWindow) return clients.openWindow(targetUrl);
     })
   );
 });

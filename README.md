@@ -8,12 +8,14 @@ It was inspired by the feature set of apps like EliteEngine (workout logging, a 
 
 ## Features
 
-- **Train** — build workout templates, then log a session fast: one weight per exercise (pre-filled from your last lift), tap through your sets, rest timer starts automatically. Comes seeded with a Push/Pull/Legs split and a separate template per muscle group (Chest, Back, Shoulders, Legs, Biceps, Triceps, Abs & Core) — use whichever split you prefer, or mix both. Automatic personal-record tracking and session history.
+- **Train** — build workout templates, then log a session fast: one weight per exercise (pre-filled from your last lift), a swipe-to-scrub picker for reps on each set (tap the arrows to step by 1, drag the number to scrub through 0–100, or tap it for exact entry), rest timer starts automatically. Comes seeded with a Push/Pull/Legs split and a separate template per muscle group (Chest, Back, Shoulders, Legs, Biceps, Triceps, Abs & Core) — use whichever split you prefer, or mix both. Automatic personal-record tracking and session history.
 - **Habits** — a daily checklist with per-habit streaks.
 - **Fuel** — daily calorie/macro targets, a quick-add list of common foods, manual meal entry, and an optional AI macro estimator.
-- **Dashboard** — an XP/rank gauge (Bronze → Apex), today's snapshot, a 7-day workout streak strip, and a warning banner if your streak is about to lapse.
+- **Dashboard** — an XP/rank gauge (Bronze → Apex, then into open-ended "Apex I / II / III…" prestige tiers so there's always a next number to chase), a streak "hero" card showing your current fire tier (Kindling → Ember → Forge Fire → Molten → White-Hot → Unbreakable → Legendary) with a progress bar to the next milestone, today's snapshot with mini progress bars, a 7-day workout streak rendered as a literal chain (linked when consecutive days are done), and a warning banner if your streak is about to lapse.
+- **Streaks** — tapping the flame in the top bar opens a streak breakdown (current/longest/total sessions, plus each habit's own streak and tier). Crossing a streak milestone (3, 7, 14, 30, 60, 100… days) pops a small celebration with bonus XP.
 - **Coach** (optional) — an AI chat that can see your stats for the day. Runs free on your own device by default, or you can switch to your own Claude API key for better quality.
-- **Reminders** — an optional nudge if today isn't logged yet by a time you pick.
+- **Daily reminder** — an optional single nudge if today isn't logged yet by a time you pick, with wording that adapts to what's actually missing.
+- **Habit nudges** — a second, separate notification feature focused on habits: checked at two times a day, it sends just 1 nudge if you've already been active in the app that day, or 2 (a gentle one, then a firmer one) if you haven't opened it at all.
 - **Backup** — export/import your data as a JSON file from Settings.
 
 ## Running it
@@ -60,9 +62,16 @@ Settings → **AI Coach & meal estimator** lets you pick how it runs:
 
 Either way, everything else in the app (training log, habits, nutrition tracking, XP/ranks) works exactly the same without any AI set up at all — those two features just won't show up.
 
-## Reminders
+## Reminders & habit nudges
 
-Settings → **Reminders** lets you turn on a browser notification if your workout or habits aren't done yet by a time you pick. Worth knowing upfront: this is a static app with no backend, so it can only check and notify while IronLog is open in a tab, or very soon after you reopen it that day — it genuinely cannot wake your phone up from a fully closed browser, since real "wake the device" push notifications need a push server this project intentionally doesn't have. Opening the app once in the evening is what actually triggers the check.
+Settings has two independent notification features:
+
+- **Daily reminder** — one browser notification if your workout or habits aren't done yet by a time you pick, worded around whatever's actually still missing (and mentioning your streak if you have one).
+- **Habit nudges** — a habit-focused feature, checked at two times you pick (defaults: 13:00 and 20:30). If you've already opened IronLog and done *something* that day, you get a single nudge listing whatever habits are still open. If you haven't touched the app at all that day, you get two — a softer one at the first check, a firmer one at the second — capped at two per day either way. Both stop nudging once your habits are fully done.
+
+Tapping either notification jumps straight to the relevant tab (Habits or Train).
+
+Worth knowing upfront: this is a static app with no backend, so both features can only check and notify while IronLog is open in a tab, or very soon after you reopen it that day — they genuinely cannot wake your phone up from a fully closed browser, since real "wake the device" push notifications need a push server this project intentionally doesn't have. Opening the app at least once around each check time is what actually triggers it.
 
 ## No browser popups
 
@@ -80,7 +89,7 @@ Everything is stored in `localStorage`, scoped to the browser and device you're 
 
 - **Templates**: seeded with a Push/Pull/Legs split plus a template per muscle group (`PPL_TEMPLATES` and `MUSCLE_TEMPLATES` in `app.js`) — edit, delete, or add your own from the Train → Templates tab. If you already had the app installed before the per-muscle templates existed, they're added automatically the next time you open it, without touching anything you've already customized or deleted.
 - **Habits**: seeded with six defaults — rename, remove, or add more from the Habits tab.
-- **Rank thresholds, XP values, and the quick-add food list**: near the top of `app.js` (`RANKS`, `QUICK_FOODS`, XP amounts inside `finishSession`, `toggleHabit`, and `logMeal`).
+- **Rank thresholds, XP values, and the quick-add food list**: near the top of `app.js` (`RANKS`, `QUICK_FOODS`, XP amounts inside `finishSession`, `toggleHabit`, and `logMeal`). Thresholds are paced for a multi-month climb rather than a quick one — Apex isn't a hard ceiling either; `APEX_PRESTIGE_STEP` controls how much XP each numbered prestige tier (Apex I, II, III…) takes beyond it.
 - **Local AI models offered**: `DEFAULT_LOCAL_MODELS` in `app.js` for the GPU path, `CPU_FALLBACK_MODEL` for the CPU path — any model ID from [WebLLM's model list](https://webllm.mlc.ai) or [transformers.js-compatible ONNX models](https://huggingface.co/models?library=transformers.js) works.
 - **Colors/fonts**: CSS custom properties at the top of `styles.css`.
 

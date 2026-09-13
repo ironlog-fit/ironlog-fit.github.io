@@ -8,14 +8,53 @@ const STORAGE_KEY = 'ironlog_state_v1';
 const APIKEY_STORAGE_KEY = 'ironlog_api_key'; // kept separate from state on purpose
 const MODEL_STORAGE_KEY = 'ironlog_model';
 
+// Thresholds are paced against realistic steady-state XP for a consistent
+// user (roughly 100-150 XP/day from one workout + all habits) — Silver
+// lands in about a week as an early win, Gold around a month in, and Apex
+// is a multi-month milestone rather than something that falls in days.
 const RANKS = [
   { name: 'Bronze',   min: 0 },
-  { name: 'Silver',   min: 500 },
-  { name: 'Gold',     min: 1200 },
-  { name: 'Platinum', min: 2500 },
-  { name: 'Diamond',  min: 4500 },
-  { name: 'Apex',     min: 7000 },
+  { name: 'Silver',   min: 800 },
+  { name: 'Gold',     min: 2500 },
+  { name: 'Platinum', min: 6000 },
+  { name: 'Diamond',  min: 13000 },
+  { name: 'Apex',     min: 26000 },
 ];
+// Apex isn't a hard ceiling — every ~10,000 XP beyond it rolls into the
+// next "prestige" tier (Apex II, Apex III, ...) so there's always a next
+// number to chase instead of the gauge just reading "Max rank reached"
+// forever once someone's put in the months to get there.
+const APEX_PRESTIGE_STEP = 10000;
+function toRoman(num) {
+  const table = [[10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']];
+  let out = '';
+  for (const [val, sym] of table) { while (num >= val) { out += sym; num -= val; } }
+  return out || 'I';
+}
+
+// Streak "tiers" — a forge/fire theme to match the app's iron-and-brass
+// identity, plus its chain-link logo mark. Purely cosmetic (colors +
+// names layered over the existing streak count), no new data fields.
+const STREAK_TIERS = [
+  { min: 0,   name: 'No streak',   emoji: '⛓',  color: '#6b6858' },
+  { min: 1,   name: 'Kindling',    emoji: '🔥', color: '#9c7a42' },
+  { min: 3,   name: 'Ember',       emoji: '🔥', color: '#c08a3e' },
+  { min: 7,   name: 'Forge Fire',  emoji: '🔥', color: '#d97a3b' },
+  { min: 14,  name: 'Molten',      emoji: '🔥', color: '#e15c33' },
+  { min: 30,  name: 'White-Hot',   emoji: '🔥', color: '#ea3f2e' },
+  { min: 60,  name: 'Unbreakable', emoji: '🔥', color: '#f2542d' },
+  { min: 100, name: 'Legendary',   emoji: '🔥', color: '#ffbb3d' },
+];
+const STREAK_MILESTONES = [3, 7, 14, 30, 60, 100, 150, 200, 365];
+
+function getStreakTier(streak) {
+  let tier = STREAK_TIERS[0];
+  for (const t of STREAK_TIERS) if (streak >= t.min) tier = t;
+  return tier;
+}
+function nextStreakMilestone(streak) {
+  return STREAK_MILESTONES.find(m => m > streak) || null;
+}
 
 const PPL_TEMPLATES = [
   { id: 'tpl_push', name: 'Push Day', exercises: [
@@ -275,6 +314,19 @@ function getRankInfo(xp) {
       next = RANKS[i + 1] || null;
     }
   }
+
+  const apex = RANKS[RANKS.length - 1];
+  if (!next && current === apex) {
+    // Past the named ladder — keep climbing through numbered prestige
+    // tiers of Apex instead of flatlining at "max rank".
+    const beyond = xp - apex.min;
+    const tier = Math.floor(beyond / APEX_PRESTIGE_STEP) + 1;
+    const intoTier = beyond % APEX_PRESTIGE_STEP;
+    current = { name: `${apex.name} ${toRoman(tier)}`, min: apex.min + (tier - 1) * APEX_PRESTIGE_STEP };
+    next = { name: `${apex.name} ${toRoman(tier + 1)}`, min: apex.min + tier * APEX_PRESTIGE_STEP };
+    return { current, next, progress: Math.min(1, Math.max(0, intoTier / APEX_PRESTIGE_STEP)) };
+  }
+
   let progress = 1;
   if (next) {
     progress = (xp - current.min) / (next.min - current.min);
@@ -318,29 +370,90 @@ function renderDashboard() {
   // streak: consecutive days (including today or yesterday) with a workout
   const streak = computeWorkoutStreak();
   document.getElementById('streak-count').textContent = streak;
+  renderStreakHero(streak);
 
   const t = todayStr();
-  document.getElementById('today-workout').textContent = state.workoutDays[t] ? 'Done ✓' : 'Not logged';
+  const workoutDone = !!state.workoutDays[t];
+  document.getElementById('today-workout').textContent = workoutDone ? 'Done ✓' : 'Not logged';
+  setTileBar('today-workout-bar', workoutDone ? 1 : 0);
 
   const habitsDoneToday = Object.values(state.habitLogs[t] || {}).filter(Boolean).length;
   document.getElementById('today-habits').textContent = `${habitsDoneToday} / ${state.habits.length}`;
+  setTileBar('today-habits-bar', state.habits.length ? habitsDoneToday / state.habits.length : 0);
 
   const todayMeals = state.nutrition.logs[t] || [];
   const cal = todayMeals.reduce((s, m) => s + m.calories, 0);
   document.getElementById('today-fuel').textContent = `${cal} / ${state.nutrition.targets.calories} kcal`;
+  setTileBar('today-fuel-bar', state.nutrition.targets.calories ? cal / state.nutrition.targets.calories : 0);
 
+  renderWeekChain();
+  renderStreakRiskBanner(streak);
+}
+
+function setTileBar(id, ratio) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const pct = Math.max(0, Math.min(1, ratio)) * 100;
+  el.style.width = pct + '%';
+  el.classList.toggle('complete', ratio >= 1);
+}
+
+function renderStreakHero(streak) {
+  const tier = getStreakTier(streak);
+  const nextMilestone = nextStreakMilestone(streak);
+
+  const flameEl = document.getElementById('streak-hero-flame');
+  flameEl.textContent = tier.emoji;
+  flameEl.style.color = tier.color;
+  flameEl.style.filter = streak > 0 ? `drop-shadow(0 0 ${Math.min(10 + streak, 26)}px ${tier.color}aa)` : 'none';
+
+  const topFlameEl = document.getElementById('streak-flame');
+  topFlameEl.style.filter = streak > 0 ? `drop-shadow(0 0 4px ${tier.color}aa)` : 'none';
+
+  const tierEl = document.getElementById('streak-hero-tier');
+  tierEl.textContent = tier.name;
+  tierEl.style.color = tier.color;
+  document.getElementById('streak-hero-count').textContent = streak;
+
+  const fillEl = document.getElementById('streak-hero-fill');
+  const span = nextMilestone ? Math.max(1, nextMilestone - tier.min) : 1;
+  const into = nextMilestone ? Math.min(1, Math.max(0, (streak - tier.min) / span)) : 1;
+  fillEl.style.width = (into * 100) + '%';
+  fillEl.style.background = tier.color;
+
+  const nextEl = document.getElementById('streak-hero-next');
+  if (streak === 0) {
+    nextEl.textContent = 'Log a workout today to light the flame';
+  } else if (nextMilestone) {
+    const left = nextMilestone - streak;
+    nextEl.textContent = `${left} day${left === 1 ? '' : 's'} to ${getStreakTier(nextMilestone).name}`;
+  } else {
+    nextEl.textContent = 'Max tier reached — legendary discipline';
+  }
+}
+
+function renderWeekChain() {
   const strip = document.getElementById('week-strip');
   strip.innerHTML = '';
-  for (let i = 6; i >= 0; i--) {
-    const d = dateStrDaysAgo(i);
-    const div = document.createElement('div');
-    div.className = 'week-day' + (state.workoutDays[d] ? ' done' : '');
-    const dayLabel = new Date(d).toLocaleDateString(undefined, { weekday: 'narrow' });
-    div.textContent = dayLabel;
-    strip.appendChild(div);
-  }
+  const days = [];
+  for (let i = 6; i >= 0; i--) days.push(dateStrDaysAgo(i));
+  const todayD = todayStr();
 
-  renderStreakRiskBanner(streak);
+  days.forEach((d, idx) => {
+    if (idx > 0) {
+      const prevDone = !!state.workoutDays[days[idx - 1]];
+      const curDone = !!state.workoutDays[d];
+      const link = document.createElement('div');
+      link.className = 'chain-link' + (prevDone && curDone ? ' linked' : '');
+      strip.appendChild(link);
+    }
+    const done = !!state.workoutDays[d];
+    const div = document.createElement('div');
+    div.className = 'week-day' + (done ? ' done' : '') + (d === todayD ? ' today' : '');
+    const dayLabel = new Date(d).toLocaleDateString(undefined, { weekday: 'narrow' });
+    div.textContent = done ? '🔥' : dayLabel;
+    strip.appendChild(div);
+  });
 }
 
 function renderStreakRiskBanner(streak) {
@@ -359,7 +472,8 @@ function renderStreakRiskBanner(streak) {
   const missing = [];
   if (!workoutDone) missing.push('a workout');
   if (!habitsAllDone) missing.push('your habits');
-  banner.textContent = `⚠ Your ${streak}-day streak resets at midnight — log ${missing.join(' and ')} to keep it.`;
+  const tier = getStreakTier(streak);
+  banner.textContent = `⚠ Your ${streak}-day ${tier.name} streak resets at midnight — log ${missing.join(' and ')} to keep it.`;
   banner.classList.remove('hidden');
 }
 
@@ -394,16 +508,37 @@ function openStreakModal() {
   const current = computeWorkoutStreak();
   const longest = Math.max(current, computeLongestStreak());
   const totalWorkouts = state.history.length;
+  const tier = getStreakTier(current);
+  const nextMilestone = nextStreakMilestone(current);
+  const span = nextMilestone ? Math.max(1, nextMilestone - tier.min) : 1;
+  const into = nextMilestone ? Math.min(1, Math.max(0, (current - tier.min) / span)) : 1;
 
   const habitsHtml = state.habits.length
-    ? state.habits.map(h => `
+    ? state.habits.map(h => {
+        const hTier = getStreakTier(h.streak);
+        const flame = h.streak > 0
+          ? `<span class="habit-tier-flame${STREAK_MILESTONES.includes(h.streak) ? ' tier-milestone' : ''}" style="color:${hTier.color}">${hTier.emoji}</span>`
+          : `<span class="habit-tier-flame" style="color:var(--muted)">·</span>`;
+        return `
         <div class="modal-row">
-          <span>${escapeHtml(h.name)}</span>
-          <span class="modal-row-val">${h.streak} day${h.streak === 1 ? '' : 's'}</span>
-        </div>`).join('')
+          <span>${flame}${escapeHtml(h.name)}</span>
+          <span class="modal-row-val" style="color:${h.streak > 0 ? hTier.color : 'var(--muted)'}">${h.streak} day${h.streak === 1 ? '' : 's'}</span>
+        </div>`;
+      }).join('')
     : '<div class="empty-state">No habits yet.</div>';
 
   document.getElementById('streak-modal-body').innerHTML = `
+    <div class="streak-hero" style="margin-bottom:16px;">
+      <div class="streak-hero-flame" style="color:${tier.color};filter:${current > 0 ? `drop-shadow(0 0 10px ${tier.color}aa)` : 'none'}">${tier.emoji}</div>
+      <div class="streak-hero-info">
+        <div class="streak-hero-top">
+          <span class="streak-hero-tier" style="color:${tier.color}">${tier.name}</span>
+          <span class="streak-hero-days">${current} day${current === 1 ? '' : 's'}</span>
+        </div>
+        <div class="streak-hero-track"><div class="streak-hero-fill" style="width:${into * 100}%;background:${tier.color}"></div></div>
+        <div class="streak-hero-next">${nextMilestone ? `${nextMilestone - current} day${nextMilestone - current === 1 ? '' : 's'} to ${getStreakTier(nextMilestone).name}` : 'Max tier reached — legendary discipline'}</div>
+      </div>
+    </div>
     <div class="modal-stat-grid">
       <div class="modal-stat"><span class="modal-stat-val">${current}</span><span class="modal-stat-label">Current streak</span></div>
       <div class="modal-stat"><span class="modal-stat-val">${longest}</span><span class="modal-stat-label">Longest streak</span></div>
@@ -423,6 +558,48 @@ document.getElementById('streak-pill').addEventListener('click', openStreakModal
 document.getElementById('streak-modal-close').addEventListener('click', closeStreakModal);
 document.getElementById('streak-modal').addEventListener('click', (e) => {
   if (e.target.id === 'streak-modal') closeStreakModal();
+});
+
+/* ---------------- Milestone celebration ---------------- */
+function celebrateStreakMilestone(streak) {
+  const tier = getStreakTier(streak);
+  const bonus = 20 + streak;
+  addXP(bonus);
+  spawnConfetti();
+  document.getElementById('milestone-body').innerHTML = `
+    <div class="milestone-flame" style="color:${tier.color}">${tier.emoji}</div>
+    <h2 class="milestone-title">${streak}-Day Streak!</h2>
+    <p class="milestone-sub">You've reached <strong style="color:${tier.color}">${tier.name}</strong>.</p>
+    <p class="milestone-xp">+${bonus} bonus XP</p>
+    <button class="btn btn-brass btn-block" id="milestone-close-btn">Keep going</button>
+  `;
+  document.getElementById('milestone-modal').classList.remove('hidden');
+  document.getElementById('milestone-close-btn').addEventListener('click', closeMilestoneModal, { once: true });
+}
+
+function closeMilestoneModal() {
+  document.getElementById('milestone-modal').classList.add('hidden');
+  document.getElementById('milestone-confetti').innerHTML = '';
+}
+
+function spawnConfetti() {
+  const wrap = document.getElementById('milestone-confetti');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  const colors = ['#C08A3E', '#6B8F5C', '#A8503D', '#EDE8DB'];
+  for (let i = 0; i < 28; i++) {
+    const piece = document.createElement('div');
+    piece.className = 'confetti-piece';
+    piece.style.left = Math.random() * 100 + '%';
+    piece.style.background = colors[Math.floor(Math.random() * colors.length)];
+    piece.style.animationDuration = (1.6 + Math.random() * 1.2) + 's';
+    piece.style.animationDelay = (Math.random() * 0.4) + 's';
+    wrap.appendChild(piece);
+  }
+}
+
+document.getElementById('milestone-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'milestone-modal') closeMilestoneModal();
 });
 
 /* ================================================================
@@ -526,7 +703,12 @@ function renderActiveSession(wrap) {
     const setsHtml = ex.sets.map((set, setIdx) => `
       <div class="set-row">
         <span class="set-num">${setIdx + 1}</span>
-        <input type="number" inputmode="numeric" value="${set.reps}" data-ex="${exIdx}" data-set="${setIdx}" data-field="reps">
+        <div class="reps-picker" data-ex="${exIdx}" data-set="${setIdx}">
+          <button type="button" class="reps-arrow" data-reps-step="-1" aria-label="Decrease reps">‹</button>
+          <span class="reps-picker-value" data-reps-value tabindex="0" role="spinbutton"
+                aria-label="Reps for set ${setIdx + 1}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${set.reps}">${set.reps}</span>
+          <button type="button" class="reps-arrow" data-reps-step="1" aria-label="Increase reps">›</button>
+        </div>
         <span class="set-unit">reps</span>
         <button class="set-done-btn ${set.done ? 'done' : ''}" data-ex="${exIdx}" data-set="${setIdx}" data-done-toggle>✓</button>
       </div>
@@ -542,7 +724,7 @@ function renderActiveSession(wrap) {
       </div>
       <div class="set-header">
         <span class="set-header-spacer"></span>
-        <span class="set-header-label">Reps</span>
+        <span class="set-header-label">Reps (swipe to set)</span>
         <span class="set-header-spacer"></span>
       </div>
       ${setsHtml}
@@ -553,12 +735,8 @@ function renderActiveSession(wrap) {
       state.activeSession.exercises[exIdx].weight = e.target.value;
       saveState();
     });
-    block.querySelectorAll('input[data-field="reps"]').forEach(input => {
-      input.addEventListener('input', () => {
-        const si = +input.dataset.set;
-        state.activeSession.exercises[exIdx].sets[si].reps = input.value;
-        saveState();
-      });
+    block.querySelectorAll('.reps-picker').forEach(picker => {
+      wireRepsPicker(picker, exIdx, +picker.dataset.set);
     });
     block.querySelectorAll('[data-done-toggle]').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -581,6 +759,73 @@ function renderActiveSession(wrap) {
   wrap.appendChild(finishBtn);
 }
 
+// Swipe-to-scrub reps picker: tap the arrows to step by 1, or drag
+// left/right across the number to scrub through the 0–100 range fast.
+// A tap on the number itself (no real drag) opens exact entry instead,
+// for when you want a precise value without hunting for it by feel.
+const REPS_PICKER_PX_PER_STEP = 10; // drag distance (px) per rep changed
+const REPS_PICKER_MAX = 100;
+
+function wireRepsPicker(pickerEl, exIdx, setIdx) {
+  const valueEl = pickerEl.querySelector('[data-reps-value]');
+
+  const getReps = () => Number(state.activeSession.exercises[exIdx].sets[setIdx].reps) || 0;
+  const setReps = (v) => {
+    const clamped = Math.max(0, Math.min(REPS_PICKER_MAX, Math.round(v)));
+    state.activeSession.exercises[exIdx].sets[setIdx].reps = String(clamped);
+    valueEl.textContent = clamped;
+    valueEl.setAttribute('aria-valuenow', clamped);
+    saveState();
+    return clamped;
+  };
+
+  pickerEl.querySelectorAll('[data-reps-step]').forEach(btn => {
+    btn.addEventListener('click', () => setReps(getReps() + Number(btn.dataset.repsStep)));
+  });
+
+  let dragging = false;
+  let moved = false;
+  let startX = 0;
+  let startVal = 0;
+
+  valueEl.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    moved = false;
+    startX = e.clientX;
+    startVal = getReps();
+    valueEl.classList.add('dragging');
+    try { valueEl.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  });
+
+  valueEl.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    if (Math.abs(dx) > 4) moved = true;
+    setReps(startVal + dx / REPS_PICKER_PX_PER_STEP);
+  });
+
+  const endDrag = async (e) => {
+    if (!dragging) return;
+    dragging = false;
+    valueEl.classList.remove('dragging');
+    if (!moved) {
+      // A plain tap (no drag) — offer exact entry for precision.
+      const typed = await showPrompt(`Set exact reps (0–${REPS_PICKER_MAX})`, String(getReps()));
+      if (typed !== null && typed.trim() !== '' && !Number.isNaN(Number(typed))) {
+        setReps(Number(typed));
+      }
+    }
+  };
+  valueEl.addEventListener('pointerup', endDrag);
+  valueEl.addEventListener('pointercancel', endDrag);
+
+  // Keyboard support for focus + arrow keys (accessibility, and desktop use).
+  valueEl.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); setReps(getReps() + 1); }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); setReps(getReps() - 1); }
+  });
+}
+
 function startRestTimer(btn) {
   let secs = 90;
   btn.dataset.original = btn.dataset.original || btn.textContent;
@@ -600,6 +845,8 @@ function startRestTimer(btn) {
 
 async function finishSession() {
   const s = state.activeSession;
+  const alreadyLoggedToday = !!state.workoutDays[todayStr()];
+  const wasIncompleteBefore = todayIsIncomplete();
   let totalVolume = 0;
   let newPRs = [];
   const historyExercises = [];
@@ -645,9 +892,16 @@ async function finishSession() {
   saveState();
   addXP(xpEarned);
 
-  toast(newPRs.length ? `Session saved — ${newPRs.length} new PR!` : 'Session saved');
+  let msg = newPRs.length ? `Session saved — ${newPRs.length} new PR!` : 'Session saved';
+  if (wasIncompleteBefore && !todayIsIncomplete()) msg += ' · 🔥 day complete';
+  toast(msg);
   renderSessionTab();
   renderHistory();
+
+  if (!alreadyLoggedToday) {
+    const newStreak = computeWorkoutStreak();
+    if (STREAK_MILESTONES.includes(newStreak)) celebrateStreakMilestone(newStreak);
+  }
 }
 
 /* --- Templates management --- */
@@ -760,13 +1014,17 @@ function renderHabits() {
 
   state.habits.forEach(h => {
     const done = !!todayLog[h.id];
+    const tier = getStreakTier(h.streak);
+    const flame = h.streak > 0
+      ? `<span class="habit-tier-flame${STREAK_MILESTONES.includes(h.streak) ? ' tier-milestone' : ''}" style="color:${tier.color}">${tier.emoji}</span>`
+      : `<span class="habit-tier-flame" style="color:var(--muted)">·</span>`;
     const row = document.createElement('div');
     row.className = 'habit-row';
     row.innerHTML = `
       <button class="habit-check ${done ? 'done' : ''}" data-toggle="${h.id}">✓</button>
       <div class="habit-info">
         <span class="habit-name" contenteditable="true" data-rename="${h.id}">${escapeHtml(h.name)}</span>
-        <span class="habit-streak">${h.streak} day streak</span>
+        <span class="habit-streak">${flame}${h.streak} day${h.streak === 1 ? '' : 's'} streak${h.streak > 0 ? ' · ' + tier.name : ''}</span>
       </div>
       <button class="habit-remove" data-remove="${h.id}">×</button>
     `;
@@ -804,6 +1062,7 @@ function toggleHabit(id) {
   const habit = state.habits.find(h => h.id === id);
   if (!habit) return;
 
+  const wasIncompleteBefore = todayIsIncomplete();
   const wasDone = !!state.habitLogs[t][id];
   const nowDone = !wasDone;
   state.habitLogs[t][id] = nowDone;
@@ -813,6 +1072,7 @@ function toggleHabit(id) {
     habit.streak = (habit.lastDate === yesterday) ? habit.streak + 1 : 1;
     habit.lastDate = t;
     addXP(10);
+    if (wasIncompleteBefore && !todayIsIncomplete()) toast('🔥 All done for today — streak secured');
   } else {
     // undo today's check
     habit.streak = Math.max(0, habit.streak - 1);
@@ -1341,6 +1601,10 @@ function renderSettings() {
 
   document.getElementById('reminder-time-input').value = getReminderTime();
   renderReminderStatus();
+
+  document.getElementById('habit-nudge-time1').value = getHabitNudgeTime1();
+  document.getElementById('habit-nudge-time2').value = getHabitNudgeTime2();
+  renderHabitNudgeStatus();
 }
 
 function renderAiModeUI() {
@@ -1513,21 +1777,30 @@ if ('serviceWorker' in navigator) {
 }
 
 /* ================================================================
-   REMINDERS (best-effort — only fires while the app is open)
+   NOTIFICATIONS (best-effort — only fires while the app is open,
+   or shortly after it's reopened; there's no push server here)
    ================================================================ */
 const REMINDERS_ENABLED_KEY = 'ironlog_reminders_enabled';
 const REMINDER_TIME_KEY = 'ironlog_reminder_time';
 const REMINDER_LAST_SHOWN_KEY = 'ironlog_reminder_last_shown';
 
+const HABIT_NUDGES_ENABLED_KEY = 'ironlog_habit_nudges_enabled';
+const HABIT_NUDGE_TIME1_KEY = 'ironlog_habit_nudge_time1';
+const HABIT_NUDGE_TIME2_KEY = 'ironlog_habit_nudge_time2';
+const HABIT_NUDGE_STATE_KEY = 'ironlog_habit_nudge_state'; // {date, count, final}
+
 function remindersEnabled() { return localStorage.getItem(REMINDERS_ENABLED_KEY) === '1'; }
 function getReminderTime() { return localStorage.getItem(REMINDER_TIME_KEY) || '20:00'; }
+function habitNudgesEnabled() { return localStorage.getItem(HABIT_NUDGES_ENABLED_KEY) === '1'; }
+function getHabitNudgeTime1() { return localStorage.getItem(HABIT_NUDGE_TIME1_KEY) || '13:00'; }
+function getHabitNudgeTime2() { return localStorage.getItem(HABIT_NUDGE_TIME2_KEY) || '20:30'; }
 
 function renderReminderStatus() {
   const statusEl = document.getElementById('reminders-status');
   const btn = document.getElementById('enable-reminders-btn');
   const supported = 'Notification' in window;
   if (supported && remindersEnabled() && Notification.permission === 'granted') {
-    statusEl.textContent = `On — nudges around ${getReminderTime()} on days you haven't finished.`;
+    statusEl.textContent = `On — one nudge around ${getReminderTime()} on days you haven't finished.`;
     btn.textContent = 'Disable reminders';
   } else {
     statusEl.textContent = supported ? 'Off.' : 'Notifications aren\'t supported in this browser.';
@@ -1573,17 +1846,71 @@ function todayIsIncomplete() {
   return !workoutDone || !habitsAllDone;
 }
 
-async function sendReminderNotification() {
-  const title = 'IronLog';
-  const body = 'Today isn\'t logged yet — a quick workout or habit check keeps your streak alive.';
+function todayHasActivity() {
+  const t = todayStr();
+  const workoutDone = !!state.workoutDays[t];
+  const anyHabitDone = Object.values(state.habitLogs[t] || {}).some(Boolean);
+  const anyMeal = (state.nutrition.logs[t] || []).length > 0;
+  return workoutDone || anyHabitDone || anyMeal;
+}
+
+function habitsRemainingToday() {
+  const t = todayStr();
+  const log = state.habitLogs[t] || {};
+  return state.habits.filter(h => !log[h.id]);
+}
+
+function habitsFullyDoneToday() {
+  return state.habits.length > 0 && habitsRemainingToday().length === 0;
+}
+
+// Shared notification sender for every kind of nudge this app sends.
+async function showAppNotification(title, body, { tag, url } = {}) {
+  const opts = {
+    body,
+    icon: 'icons/icon-192.png',
+    badge: 'icons/icon-192.png',
+    tag: tag || 'ironlog',
+    renotify: true,
+    vibrate: [120, 60, 120],
+    data: { url: url || './index.html' },
+  };
   try {
     if ('serviceWorker' in navigator) {
       const reg = await navigator.serviceWorker.ready;
-      reg.showNotification(title, { body, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png' });
+      reg.showNotification(title, opts);
       return;
     }
   } catch (e) { /* fall through to plain Notification */ }
-  try { new Notification(title, { body }); } catch (e) { console.warn('Could not show notification', e); }
+  try { new Notification(title, opts); } catch (e) { console.warn('Could not show notification', e); }
+}
+
+/* ---- Daily reminder: one combined ping about workout + habits ---- */
+function buildReminderMessage(streak) {
+  const t = todayStr();
+  const workoutDone = !!state.workoutDays[t];
+  const habitsDone = habitsFullyDoneToday();
+  const streakNote = streak > 0 ? ` Your ${streak}-day streak is waiting on it.` : '';
+
+  if (!workoutDone && !habitsDone) {
+    return `Nothing logged yet today.${streakNote} A quick workout or habit check keeps things moving.`;
+  }
+  if (!workoutDone) {
+    return `Habits are sorted — just today's workout left.${streakNote}`;
+  }
+  return `Workout's in — a few habits left to close out the day.${streakNote}`;
+}
+
+async function sendReminderNotification() {
+  const streak = computeWorkoutStreak();
+  const t = todayStr();
+  const workoutDone = !!state.workoutDays[t];
+  const habitsDone = habitsFullyDoneToday();
+  const body = buildReminderMessage(streak);
+  let url = './index.html';
+  if (workoutDone && !habitsDone) url = './index.html#habits';
+  else if (!workoutDone && habitsDone) url = './index.html#train';
+  await showAppNotification('IronLog', body, { tag: 'ironlog-reminder', url });
 }
 
 function maybeSendReminder() {
@@ -1612,13 +1939,162 @@ function scheduleTodayReminder() {
   }
 }
 
+/* ---- Habit nudges: 1 nudge/day if you've already been active,
+   2 (a gentle one, then a firmer one) if you haven't touched the
+   app at all — checked at two times during the day ---- */
+function getHabitNudgeState() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(HABIT_NUDGE_STATE_KEY) || 'null');
+    if (raw && raw.date === todayStr()) return raw;
+  } catch (e) { /* fall through to a fresh state */ }
+  return { date: todayStr(), count: 0, final: false };
+}
+function setHabitNudgeState(s) {
+  localStorage.setItem(HABIT_NUDGE_STATE_KEY, JSON.stringify(s));
+}
+
+function buildHabitNudgeMessage(slot, hasActivity) {
+  const remaining = habitsRemainingToday();
+  const names = remaining.slice(0, 2).map(h => h.name).join(', ');
+  const extra = remaining.length > 2 ? ` +${remaining.length - 2} more` : '';
+  const count = remaining.length;
+  const plural = count === 1 ? '' : 's';
+
+  if (slot === 1) {
+    return hasActivity
+      ? `You're active today — ${count} habit${plural} left: ${names}${extra}.`
+      : `Haven't opened IronLog today. ${count} habit${plural} waiting: ${names}${extra}.`;
+  }
+  return hasActivity
+    ? `Almost there — ${count} habit${plural} left today: ${names}${extra}.`
+    : `Day's winding down and nothing's logged yet. ${count} habit${plural} still open: ${names}${extra}.`;
+}
+
+async function sendHabitNudgeNotification(slot, hasActivity) {
+  const body = buildHabitNudgeMessage(slot, hasActivity);
+  await showAppNotification('IronLog · Habits', body, { tag: 'ironlog-habit-nudge', url: './index.html#habits' });
+}
+
+// Rule of thumb: a day where you've already shown up gets one nudge
+// about what's left; a day with zero activity gets chased harder — a
+// soft nudge at check 1, then a firmer one at check 2 if you're still
+// dark by then. Capped at 2 sends/day either way.
+function maybeSendHabitNudge(slot) {
+  if (!('Notification' in window)) return;
+  if (!habitNudgesEnabled() || Notification.permission !== 'granted') return;
+  if (state.habits.length === 0) return;
+
+  const timeStr = slot === 1 ? getHabitNudgeTime1() : getHabitNudgeTime2();
+  const [h, m] = timeStr.split(':').map(Number);
+  const now = new Date();
+  const reached = now.getHours() > h || (now.getHours() === h && now.getMinutes() >= m);
+  if (!reached) return;
+  if (habitsFullyDoneToday()) return; // nothing to nudge about
+
+  const nudgeState = getHabitNudgeState();
+  if (nudgeState.final) return; // today's quota already decided/sent
+
+  if (slot === 1) {
+    if (nudgeState.count >= 1) return;
+    const hasActivity = todayHasActivity();
+    sendHabitNudgeNotification(1, hasActivity);
+    // Already active today → that's the one nudge this day gets.
+    // Not active yet → leave the door open for a second, firmer nudge.
+    setHabitNudgeState({ date: todayStr(), count: 1, final: hasActivity });
+  } else {
+    if (nudgeState.count >= 2) return;
+    const hasActivity = todayHasActivity();
+    sendHabitNudgeNotification(2, hasActivity);
+    setHabitNudgeState({ date: todayStr(), count: nudgeState.count + 1, final: true });
+  }
+}
+
+let habitNudgeTimeoutIds = [];
+function scheduleHabitNudges() {
+  habitNudgeTimeoutIds.forEach(clearTimeout);
+  habitNudgeTimeoutIds = [];
+  if (!habitNudgesEnabled()) return;
+  [[1, getHabitNudgeTime1()], [2, getHabitNudgeTime2()]].forEach(([slot, timeStr]) => {
+    const [h, m] = timeStr.split(':').map(Number);
+    const target = new Date();
+    target.setHours(h, m, 0, 0);
+    const ms = target.getTime() - Date.now();
+    if (ms > 0 && ms < 24 * 60 * 60 * 1000) {
+      habitNudgeTimeoutIds.push(setTimeout(() => maybeSendHabitNudge(slot), ms));
+    }
+  });
+}
+
+function renderHabitNudgeStatus() {
+  const statusEl = document.getElementById('habit-nudges-status');
+  const toggle = document.getElementById('habit-nudges-toggle');
+  const supported = 'Notification' in window;
+  const on = supported && habitNudgesEnabled() && Notification.permission === 'granted';
+  toggle.classList.toggle('on', on);
+  toggle.setAttribute('aria-checked', on ? 'true' : 'false');
+  if (!supported) {
+    statusEl.textContent = 'Notifications aren\'t supported in this browser.';
+  } else if (on) {
+    statusEl.textContent = `On — 1 nudge if you've already been active today, 2 if you haven't (around ${getHabitNudgeTime1()} and ${getHabitNudgeTime2()}).`;
+  } else {
+    statusEl.textContent = 'Off.';
+  }
+}
+
+document.getElementById('habit-nudges-toggle').addEventListener('click', async () => {
+  if (habitNudgesEnabled()) {
+    localStorage.setItem(HABIT_NUDGES_ENABLED_KEY, '0');
+    renderHabitNudgeStatus();
+    scheduleHabitNudges();
+    toast('Habit nudges off');
+    return;
+  }
+  if (!('Notification' in window)) {
+    toast('This browser doesn\'t support notifications');
+    return;
+  }
+  if (Notification.permission !== 'granted') {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      toast('Notifications were blocked in the browser');
+      renderHabitNudgeStatus();
+      return;
+    }
+  }
+  localStorage.setItem(HABIT_NUDGES_ENABLED_KEY, '1');
+  renderHabitNudgeStatus();
+  toast('Habit nudges on');
+  scheduleHabitNudges();
+});
+
+document.getElementById('habit-nudge-time1').addEventListener('change', (e) => {
+  localStorage.setItem(HABIT_NUDGE_TIME1_KEY, e.target.value || '13:00');
+  renderHabitNudgeStatus();
+  scheduleHabitNudges();
+});
+document.getElementById('habit-nudge-time2').addEventListener('change', (e) => {
+  localStorage.setItem(HABIT_NUDGE_TIME2_KEY, e.target.value || '20:30');
+  renderHabitNudgeStatus();
+  scheduleHabitNudges();
+});
+
 if ('Notification' in window) {
   maybeSendReminder();
+  maybeSendHabitNudge(1);
+  maybeSendHabitNudge(2);
   scheduleTodayReminder();
+  scheduleHabitNudges();
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') maybeSendReminder();
+    if (document.visibilityState === 'visible') {
+      maybeSendReminder();
+      maybeSendHabitNudge(1);
+      maybeSendHabitNudge(2);
+    }
   });
 }
 
 /* ---------------- init ---------------- */
-switchView('dashboard');
+// Notification taps can deep-link straight to the relevant tab.
+const initialHash = (location.hash || '').replace('#', '');
+switchView(['train', 'habits', 'fuel', 'coach', 'settings'].includes(initialHash) ? initialHash : 'dashboard');
+

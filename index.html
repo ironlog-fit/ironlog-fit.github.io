@@ -58,18 +58,33 @@
         </div>
       </div>
 
+      <div class="streak-hero" id="streak-hero">
+        <div class="streak-hero-flame" id="streak-hero-flame">🔥</div>
+        <div class="streak-hero-info">
+          <div class="streak-hero-top">
+            <span class="streak-hero-tier" id="streak-hero-tier">No streak</span>
+            <span class="streak-hero-days"><span id="streak-hero-count">0</span> day streak</span>
+          </div>
+          <div class="streak-hero-track"><div class="streak-hero-fill" id="streak-hero-fill"></div></div>
+          <div class="streak-hero-next" id="streak-hero-next">Log a workout today to light the flame</div>
+        </div>
+      </div>
+
       <div class="today-grid">
         <button class="today-tile" data-target="train">
-          <span class="today-label">Training</span>
+          <span class="today-tile-top"><span class="today-icon">🏋</span><span class="today-label">Training</span></span>
           <span class="today-value" id="today-workout">Not logged</span>
+          <span class="today-bar"><span class="today-bar-fill" id="today-workout-bar"></span></span>
         </button>
         <button class="today-tile" data-target="habits">
-          <span class="today-label">Habits</span>
+          <span class="today-tile-top"><span class="today-icon">✓</span><span class="today-label">Habits</span></span>
           <span class="today-value" id="today-habits">0 / 6</span>
+          <span class="today-bar"><span class="today-bar-fill" id="today-habits-bar"></span></span>
         </button>
         <button class="today-tile" data-target="fuel">
-          <span class="today-label">Fuel</span>
+          <span class="today-tile-top"><span class="today-icon">🍽</span><span class="today-label">Fuel</span></span>
           <span class="today-value" id="today-fuel">0 / 0 kcal</span>
+          <span class="today-bar"><span class="today-bar-fill" id="today-fuel-bar"></span></span>
         </button>
       </div>
 
@@ -225,13 +240,29 @@
       </div>
 
       <div class="panel">
-        <div class="panel-head"><h2>Reminders</h2></div>
-        <p class="hint">A nudge if your workout or habits aren't done yet by a time you pick. This is a static, no-server app, so this only works while IronLog is open in a tab or shortly after you open it — it can't wake your phone up from fully closed, since that needs a push server this project doesn't have.</p>
+        <div class="panel-head"><h2>Daily reminder</h2></div>
+        <p class="hint">One nudge if your workout or habits aren't done yet by a time you pick. This is a static, no-server app, so this only works while IronLog is open in a tab or shortly after you open it — it can't wake your phone up from fully closed, since that needs a push server this project doesn't have.</p>
         <div class="row">
           <button class="btn btn-brass" id="enable-reminders-btn">Enable reminders</button>
           <input type="time" id="reminder-time-input" value="20:00">
         </div>
         <p class="hint tiny" id="reminders-status">Off.</p>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><h2>Habit nudges</h2></div>
+        <p class="hint">Smarter habit reminders, checked at two points in the day: if you've already opened IronLog that day, you just get 1 nudge about whatever habits are left; if you haven't touched it at all, you get 2 — a gentle one, then a firmer one. Same foreground-only limit as the daily reminder above.</p>
+        <div class="switch-row">
+          <span>Enable habit nudges</span>
+          <button type="button" class="switch" id="habit-nudges-toggle" role="switch" aria-checked="false" aria-label="Enable habit nudges"></button>
+        </div>
+        <div class="time-row">
+          <label for="habit-nudge-time1">Check 1</label>
+          <input type="time" id="habit-nudge-time1" value="13:00">
+          <label for="habit-nudge-time2">Check 2</label>
+          <input type="time" id="habit-nudge-time2" value="20:30">
+        </div>
+        <p class="hint tiny" id="habit-nudges-status">Off.</p>
       </div>
 
       <div class="panel">
@@ -316,6 +347,13 @@
       <button id="streak-modal-close" class="icon-btn" aria-label="Close">×</button>
     </div>
     <div id="streak-modal-body"></div>
+  </div>
+</div>
+
+<div id="milestone-modal" class="modal-overlay hidden">
+  <div class="milestone-card">
+    <div id="milestone-confetti"></div>
+    <div id="milestone-body"></div>
   </div>
 </div>
 
