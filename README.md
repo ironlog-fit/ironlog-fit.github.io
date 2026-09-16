@@ -43,6 +43,8 @@ It's a PWA at [ironlog-fit.github.io](https://ironlog-fit.github.io/), so it's i
 
 After the first visit, a service worker caches the app shell (the HTML/CSS/JS/icons), so **training, habits and nutrition tracking keep working offline** — no internet, no server, nothing running in the background on your machine. The one thing that still needs a live connection is the Cloud AI option, since that's a real-time call to Anthropic's servers — the free on-device AI works offline too, once its model is downloaded.
 
+Installing also matters for notifications: on Chrome/Edge/Samsung Internet, an installed app has a real shot at the reminder/habit-nudge checks running in the background, with nothing open — see "Reminders & habit nudges" below for what that actually looks like.
+
 ## AI Coach & meal estimator — free by default, cloud optional
 
 Settings → **AI Coach & meal estimator** lets you pick how it runs:
@@ -71,7 +73,17 @@ Settings has two independent notification features:
 
 Tapping either notification jumps straight to the relevant tab (Habits or Train).
 
-Worth knowing upfront: this is a static app with no backend, so both features can only check and notify while IronLog is open in a tab, or very soon after you reopen it that day — they genuinely cannot wake your phone up from a fully closed browser, since real "wake the device" push notifications need a push server this project intentionally doesn't have. Opening the app at least once around each check time is what actually triggers it.
+**How these actually fire, and where that breaks down:**
+
+By default, both checks run in page JS (`setTimeout` + `visibilitychange`), which only works while a tab is open, or in the moment right after you reopen one — a fully closed browser has nothing running to fire the check. That's the behavior you'll see if you're just visiting the site as a normal tab.
+
+If you **install IronLog as an app** (see "Installing it as an app" above) on a **Chromium browser — Chrome, Edge, or Samsung Internet on Android** — it also tries to register for [Periodic Background Sync](https://developer.chrome.com/blog/periodic-background-sync/), which lets the service worker itself wake up on its own and run the same check with nothing open at all. Settings will tell you plainly whether this is actually active for your device (Off / not available yet / on). Some real caveats, so expectations match reality:
+
+- It's genuinely best-effort: the browser decides when to run it based on how much you use the site, not the exact times you picked — it can run late, or some days not at all.
+- It only exists on Chromium browsers, and only for an installed app — **no support at all on Safari/iOS or Firefox**, install or not. On those, notifications only ever fire while a tab is open.
+- The only way to get *guaranteed*, exact-time notifications on every platform (including iOS) is real Web Push with a backend server pushing them — which this project intentionally doesn't have, in order to stay a fully static, zero-backend site.
+
+Practically: opening the app now and then is still what makes this reliable everywhere. On installed Chromium browsers you'll also get a decent shot at it firing on its own.
 
 ## No browser popups
 

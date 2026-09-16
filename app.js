@@ -204,6 +204,7 @@ function loadState() {
   }
 }
 
+let notifySyncDebounce = null;
 function saveState() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -211,6 +212,12 @@ function saveState() {
     console.error('Failed to save state', e);
     toast('Could not save — storage may be full');
   }
+  // Mirror the slice of state the service worker needs into IndexedDB
+  // (debounced — saveState() can fire on every keystroke) so background
+  // notification checks have something current to read. See the
+  // BACKGROUND NOTIFICATIONS section further down for why this exists.
+  if (notifySyncDebounce) clearTimeout(notifySyncDebounce);
+  notifySyncDebounce = setTimeout(() => { syncNotifyStateToIDB(); }, 600);
 }
 
 function getApiKey() { return localStorage.getItem(APIKEY_STORAGE_KEY) || ''; }
@@ -1800,7 +1807,7 @@ function renderReminderStatus() {
   const btn = document.getElementById('enable-reminders-btn');
   const supported = 'Notification' in window;
   if (supported && remindersEnabled() && Notification.permission === 'granted') {
-    statusEl.textContent = `On — one nudge around ${getReminderTime()} on days you haven't finished.`;
+    statusEl.textContent = `On — one nudge around ${getReminderTime()} on days you haven't finished.${bgSyncStatusNote()}`;
     btn.textContent = 'Disable reminders';
   } else {
     statusEl.textContent = supported ? 'Off.' : 'Notifications aren\'t supported in this browser.';
@@ -1830,12 +1837,16 @@ document.getElementById('enable-reminders-btn').addEventListener('click', async 
   renderReminderStatus();
   toast('Reminders on');
   scheduleTodayReminder();
+  await syncNotifyStateToIDB();
+  await tryRegisterBackgroundSync();
+  renderReminderStatus();
 });
 
 document.getElementById('reminder-time-input').addEventListener('change', (e) => {
   localStorage.setItem(REMINDER_TIME_KEY, e.target.value || '20:00');
   renderReminderStatus();
   scheduleTodayReminder();
+  syncNotifyStateToIDB();
 });
 
 function todayIsIncomplete() {
@@ -2035,7 +2046,7 @@ function renderHabitNudgeStatus() {
   if (!supported) {
     statusEl.textContent = 'Notifications aren\'t supported in this browser.';
   } else if (on) {
-    statusEl.textContent = `On — 1 nudge if you've already been active today, 2 if you haven't (around ${getHabitNudgeTime1()} and ${getHabitNudgeTime2()}).`;
+    statusEl.textContent = `On — 1 nudge if you've already been active today, 2 if you haven't (around ${getHabitNudgeTime1()} and ${getHabitNudgeTime2()}).${bgSyncStatusNote()}`;
   } else {
     statusEl.textContent = 'Off.';
   }
@@ -2065,30 +2076,169 @@ document.getElementById('habit-nudges-toggle').addEventListener('click', async (
   renderHabitNudgeStatus();
   toast('Habit nudges on');
   scheduleHabitNudges();
+  await syncNotifyStateToIDB();
+  await tryRegisterBackgroundSync();
+  renderHabitNudgeStatus();
 });
 
 document.getElementById('habit-nudge-time1').addEventListener('change', (e) => {
   localStorage.setItem(HABIT_NUDGE_TIME1_KEY, e.target.value || '13:00');
   renderHabitNudgeStatus();
   scheduleHabitNudges();
+  syncNotifyStateToIDB();
 });
 document.getElementById('habit-nudge-time2').addEventListener('change', (e) => {
   localStorage.setItem(HABIT_NUDGE_TIME2_KEY, e.target.value || '20:30');
   renderHabitNudgeStatus();
   scheduleHabitNudges();
+  syncNotifyStateToIDB();
 });
 
+/* ---------------- Background notifications (Periodic Background Sync) ----------------
+   Everything above only fires while a tab is open — setTimeout and
+   visibilitychange both die the moment the tab or browser closes, so
+   with just that, a closed app genuinely never notifies. Periodic
+   Background Sync lets the service worker itself wake up on a
+   schedule the browser decides (not exact, and only on Chromium
+   browsers, and only once IronLog is installed as an app — see
+   README) and run the same check with no tab open at all.
+
+   A service worker can't read localStorage, so the fields it needs
+   are mirrored into IndexedDB every time relevant state changes;
+   see runBackgroundNotifyCheck() in sw.js for the other half of this. */
+const BG_SYNC_STATUS_KEY = 'ironlog_bg_sync_status'; // 'on' | 'off' | unset
+
+function idbOpenNotifyDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('ironlog-notify', 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore('kv'); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbGet(key) {
+  try {
+    const db = await idbOpenNotifyDB();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('kv', 'readonly');
+      const r = tx.objectStore('kv').get(key);
+      r.onsuccess = () => resolve(r.result || null);
+      r.onerror = () => reject(r.error);
+    });
+  } catch (e) { return null; }
+}
+async function idbSet(key, value) {
+  try {
+    const db = await idbOpenNotifyDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* best-effort — no IndexedDB, nothing we can do here */ }
+}
+
+function buildNotifySnapshot() {
+  const t = todayStr();
+  return {
+    today: t,
+    workoutDone: !!state.workoutDays[t],
+    habits: state.habits.map(h => ({ id: h.id, name: h.name })),
+    habitLogsToday: Object.assign({}, state.habitLogs[t] || {}),
+    mealsLoggedToday: (state.nutrition.logs[t] || []).length > 0,
+    streak: computeWorkoutStreak(),
+    settings: {
+      remindersEnabled: remindersEnabled(),
+      reminderTime: getReminderTime(),
+      reminderLastShownDate: localStorage.getItem(REMINDER_LAST_SHOWN_KEY) || '',
+      habitNudgesEnabled: habitNudgesEnabled(),
+      habitNudgeTime1: getHabitNudgeTime1(),
+      habitNudgeTime2: getHabitNudgeTime2(),
+      habitNudgeState: getHabitNudgeState(),
+    },
+  };
+}
+async function syncNotifyStateToIDB() {
+  await idbSet('notifyState', buildNotifySnapshot());
+}
+
+// If the service worker fired something while the app was closed, pull
+// its updated "already sent today" bookkeeping back into localStorage
+// so the foreground checks below don't turn around and send it again.
+async function reconcileNotifyStateFromIDB() {
+  const snap = await idbGet('notifyState');
+  if (!snap || !snap.settings) return;
+  const s = snap.settings;
+  if (s.reminderLastShownDate && s.reminderLastShownDate > (localStorage.getItem(REMINDER_LAST_SHOWN_KEY) || '')) {
+    localStorage.setItem(REMINDER_LAST_SHOWN_KEY, s.reminderLastShownDate);
+  }
+  if (s.habitNudgeState && s.habitNudgeState.date === todayStr()) {
+    const local = getHabitNudgeState();
+    if (s.habitNudgeState.date === local.date
+        && (s.habitNudgeState.count > local.count || (s.habitNudgeState.final && !local.final))) {
+      setHabitNudgeState(s.habitNudgeState);
+    }
+  }
+}
+
+function isInstalledPWA() {
+  return !!(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+}
+function backgroundSyncStatus() { return localStorage.getItem(BG_SYNC_STATUS_KEY) || 'unknown'; }
+
+// Best-effort — succeeds only on Chromium browsers with IronLog installed
+// as an app and enough engagement history for the browser to trust it.
+// Fails silently everywhere else; the foreground checks keep working
+// regardless either way.
+async function tryRegisterBackgroundSync() {
+  let ok = false;
+  try {
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.ready;
+      if ('periodicSync' in reg) {
+        await reg.periodicSync.register('ironlog-habit-check', { minInterval: 6 * 60 * 60 * 1000 });
+        ok = true;
+      }
+    }
+  } catch (e) { ok = false; }
+  localStorage.setItem(BG_SYNC_STATUS_KEY, ok ? 'on' : 'off');
+  return ok;
+}
+
+function bgSyncStatusNote() {
+  if (backgroundSyncStatus() === 'on') {
+    return ' Background checks are on for this device, so this can fire even with IronLog fully closed — timing isn\'t exact, the browser decides when to run it.';
+  }
+  if (isInstalledPWA()) {
+    return ' Background checks aren\'t available yet on this install — otherwise this only fires while a tab is open or shortly after you reopen it.';
+  }
+  return ' Install IronLog as an app (browser menu → Install app) for a chance at background checks — otherwise this only fires while a tab is open.';
+}
+
 if ('Notification' in window) {
-  maybeSendReminder();
-  maybeSendHabitNudge(1);
-  maybeSendHabitNudge(2);
+  reconcileNotifyStateFromIDB().finally(() => {
+    maybeSendReminder();
+    maybeSendHabitNudge(1);
+    maybeSendHabitNudge(2);
+  });
   scheduleTodayReminder();
   scheduleHabitNudges();
+  syncNotifyStateToIDB();
+  if (remindersEnabled() || habitNudgesEnabled()) {
+    tryRegisterBackgroundSync().then(() => {
+      renderReminderStatus();
+      renderHabitNudgeStatus();
+    });
+  }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
-      maybeSendReminder();
-      maybeSendHabitNudge(1);
-      maybeSendHabitNudge(2);
+      reconcileNotifyStateFromIDB().finally(() => {
+        maybeSendReminder();
+        maybeSendHabitNudge(1);
+        maybeSendHabitNudge(2);
+      });
+      syncNotifyStateToIDB();
     }
   });
 }
