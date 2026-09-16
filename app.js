@@ -247,12 +247,12 @@ function openGenericModal({ title, bodyHtml, buttons, onOpen }) {
     btnEl.addEventListener('click', () => { closeGenericModal(); b.onClick(); });
     btnWrap.appendChild(btnEl);
   });
-  document.getElementById('generic-modal').classList.remove('hidden');
+  openModal('generic-modal');
   if (onOpen) setTimeout(onOpen, 0);
 }
 
 function closeGenericModal() {
-  document.getElementById('generic-modal').classList.add('hidden');
+  closeModal('generic-modal');
 }
 
 document.getElementById('generic-modal-close').addEventListener('click', closeGenericModal);
@@ -342,6 +342,7 @@ function getRankInfo(xp) {
 }
 
 /* ---------------- Navigation ---------------- */
+let currentView = 'dashboard';
 function switchView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === name));
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.target === name));
@@ -352,12 +353,76 @@ function switchView(name) {
   if (name === 'coach') renderCoach();
   if (name === 'settings') renderSettings();
   window.scrollTo(0, 0);
+
+  currentView = name;
+  if (name === 'dashboard') settleHomeIfIdle();
+  else pushAwayState();
 }
 
 document.querySelectorAll('[data-target]').forEach(el => {
   el.addEventListener('click', () => switchView(el.dataset.target));
 });
 document.getElementById('settings-btn').addEventListener('click', () => switchView('settings'));
+
+/* ---------------- Back button / gesture handling ----------------
+   Without this, the History API has nothing to pop, so Android's
+   back gesture (and any browser back button) falls straight through
+   to closing the app or leaving the page — even mid-tab or with a
+   modal open. The fix is the standard one: push a single history
+   entry whenever we're "away" from the plain dashboard (a non-
+   dashboard tab, an open modal, or both at once), and pop it — via
+   whichever comes first — on the next back press, landing back on
+   the dashboard with everything closed. Only once nothing pushed is
+   left does a further back press fall through to actually exiting,
+   which is what should happen from the dashboard's home state. */
+const MODAL_IDS = ['generic-modal', 'streak-modal', 'milestone-modal'];
+let awayStatePushed = false;
+
+function anyModalOpen() {
+  return MODAL_IDS.some(id => {
+    const el = document.getElementById(id);
+    return el && !el.classList.contains('hidden');
+  });
+}
+function closeAllModals() {
+  MODAL_IDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.add('hidden');
+  });
+}
+function pushAwayState() {
+  if (awayStatePushed) return;
+  awayStatePushed = true;
+  try { history.pushState({ ironlogAway: true }, ''); } catch (e) { /* ignore */ }
+}
+// Call after any programmatic (non-back-gesture) change that might have
+// left us at "home, nothing open" — pops the entry we pushed to get
+// here, so a real back press right after still exits on the first try
+// instead of wasting a press on an entry that no longer means anything.
+function settleHomeIfIdle() {
+  if (awayStatePushed && currentView === 'dashboard' && !anyModalOpen()) {
+    awayStatePushed = false;
+    try { history.back(); } catch (e) { /* ignore */ }
+  }
+}
+function openModal(id) {
+  pushAwayState();
+  document.getElementById(id).classList.remove('hidden');
+}
+function closeModal(id) {
+  document.getElementById(id).classList.add('hidden');
+  settleHomeIfIdle();
+}
+
+window.addEventListener('popstate', () => {
+  // Whatever entry the back gesture just popped, converge on the same
+  // end state either way: close anything open, and if that leaves a
+  // non-dashboard tab showing, drop back to the dashboard too — both
+  // in this one press, matching "close this and return to dashboard".
+  awayStatePushed = false;
+  closeAllModals();
+  if (currentView !== 'dashboard') switchView('dashboard');
+});
 
 /* ================================================================
    DASHBOARD
@@ -554,11 +619,11 @@ function openStreakModal() {
     <div class="panel-head" style="margin-top:18px;"><h2>Habit streaks</h2></div>
     ${habitsHtml}
   `;
-  document.getElementById('streak-modal').classList.remove('hidden');
+  openModal('streak-modal');
 }
 
 function closeStreakModal() {
-  document.getElementById('streak-modal').classList.add('hidden');
+  closeModal('streak-modal');
 }
 
 document.getElementById('streak-pill').addEventListener('click', openStreakModal);
@@ -580,12 +645,12 @@ function celebrateStreakMilestone(streak) {
     <p class="milestone-xp">+${bonus} bonus XP</p>
     <button class="btn btn-brass btn-block" id="milestone-close-btn">Keep going</button>
   `;
-  document.getElementById('milestone-modal').classList.remove('hidden');
+  openModal('milestone-modal');
   document.getElementById('milestone-close-btn').addEventListener('click', closeMilestoneModal, { once: true });
 }
 
 function closeMilestoneModal() {
-  document.getElementById('milestone-modal').classList.add('hidden');
+  closeModal('milestone-modal');
   document.getElementById('milestone-confetti').innerHTML = '';
 }
 
@@ -2249,11 +2314,15 @@ if ('Notification' in window) {
 // the address bar forever, since nothing else here ever sets or reads
 // it. Left alone, every later launch of that same tab/PWA window would
 // keep reopening to whatever tab the last notification pointed at,
-// instead of the dashboard. So: honor it once, then clear it.
+// instead of the dashboard. So: honor it once, then clear it — and
+// clear it from the base history entry *before* switchView() below has
+// a chance to push an "away" entry on top of it, so the hash can't
+// resurface on that base entry later (e.g. if the back gesture is used
+// to return to it and the tab is later resumed from there).
 const initialHash = (location.hash || '').replace('#', '');
 const validHashViews = ['train', 'habits', 'fuel', 'coach', 'settings'];
-switchView(validHashViews.includes(initialHash) ? initialHash : 'dashboard');
 if (initialHash) {
   history.replaceState(null, '', location.pathname + location.search);
 }
+switchView(validHashViews.includes(initialHash) ? initialHash : 'dashboard');
 
