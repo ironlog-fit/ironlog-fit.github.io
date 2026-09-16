@@ -2244,7 +2244,16 @@ if ('Notification' in window) {
 }
 
 /* ---------------- init ---------------- */
-// Notification taps can deep-link straight to the relevant tab.
+// Notification taps can deep-link straight to the relevant tab (via a
+// URL like index.html#habits) — but that hash otherwise just sits in
+// the address bar forever, since nothing else here ever sets or reads
+// it. Left alone, every later launch of that same tab/PWA window would
+// keep reopening to whatever tab the last notification pointed at,
+// instead of the dashboard. So: honor it once, then clear it.
 const initialHash = (location.hash || '').replace('#', '');
-switchView(['train', 'habits', 'fuel', 'coach', 'settings'].includes(initialHash) ? initialHash : 'dashboard');
+const validHashViews = ['train', 'habits', 'fuel', 'coach', 'settings'];
+switchView(validHashViews.includes(initialHash) ? initialHash : 'dashboard');
+if (initialHash) {
+  history.replaceState(null, '', location.pathname + location.search);
+}
 
